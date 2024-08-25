@@ -1,0 +1,6 @@
+[workspace]
+members = [ 
+    "physics_engine",
+    "rendering_engine",
+]
+resolver = "2"
