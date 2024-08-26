@@ -4,9 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytemuck = { version = "1.17.0", features = ["derive"] }
-ogl33 = { version = "0.2.0", features = ["debug_error_checks"]}
-
-[dev-dependencies]
-beryllium = "0.2.0-alpha.4"
-imagine = "0.0.5"
+glium = "*"
