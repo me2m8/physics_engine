@@ -5,7 +5,6 @@ use crate::vertex::*;
 pub struct State<'a> {
     pub instance: wgpu::Instance,
     pub surface: wgpu::Surface<'a>,
-    pub canvas_size: winit::dpi::PhysicalSize<u32>,
     pub config: wgpu::SurfaceConfiguration,
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
@@ -69,6 +68,8 @@ impl<'a> State<'a> {
             view_formats: vec![],
         };
 
+        println!("{:?}", config.format);
+
         surface.configure(&device, &config);
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
@@ -120,7 +121,6 @@ impl<'a> State<'a> {
         Self {
             instance,
             surface,
-            canvas_size,
             config,
             adapter,
             device,

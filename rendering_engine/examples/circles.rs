@@ -4,7 +4,7 @@ use rendering_engine::{state::State, vertex::Vertex};
 use wgpu::{include_wgsl, util::{DeviceExt, RenderEncoder}};
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::{KeyCode, PhysicalKey}, platform::{wayland::WindowBuilderExtWayland, x11::WindowBuilderExtX11},
 };
 
 struct Context {
@@ -43,7 +43,7 @@ impl Context {
                 },
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState {
-                    count: 4,
+                    count: 1,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
@@ -98,10 +98,10 @@ impl Context {
 
 #[rustfmt::skip]
 const VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.5, -0.5,  0.0], color: [1.0, 0.0, 0.0], tex_coord: [-1.0, -1.0] },
-    Vertex { position: [ 0.5, -0.5,  0.0], color: [0.0, 1.0, 0.0], tex_coord: [ 1.0, -1.0] },
-    Vertex { position: [ 0.5,  0.5,  0.0], color: [0.0, 0.0, 1.0], tex_coord: [ 1.0,  1.0] },
-    Vertex { position: [-0.5,  0.5,  0.0], color: [1.0, 1.0, 1.0], tex_coord: [-1.0,  1.0] },
+    Vertex { position: [-0.5, -0.5,  0.0], color: [1.0, 0.0, 0.0] },
+    Vertex { position: [ 0.5, -0.5,  0.0], color: [0.0, 1.0, 0.0] },
+    Vertex { position: [ 0.5,  0.5,  0.0], color: [0.0, 0.0, 1.0] },
+    Vertex { position: [-0.5,  0.5,  0.0], color: [1.0, 1.0, 1.0] },
 ];
 
 #[rustfmt::skip]
@@ -119,6 +119,8 @@ async fn main() {
 async fn run() {
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
     let window = winit::window::WindowBuilder::new()
+        .with_title("cum: the gamme")
+        .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
         .build(&event_loop)
         .unwrap();
 
@@ -161,23 +163,6 @@ async fn run() {
 fn update(state: &mut State) {}
 
 fn render(ctx: &Context, state: &mut State) {
-    let multisample_texture = state.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Multisample Texture"),
-        size: wgpu::Extent3d {
-            width: state.canvas_size.width,
-            height: state.canvas_size.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 4,
-        dimension: wgpu::TextureDimension::D2,
-        format: state.config.format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-
-    let multisample_view = multisample_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
     let (output, view) = state.create_view().unwrap();
     let mut encoder = state.create_encoder("Command Encoder");
 
@@ -185,8 +170,8 @@ fn render(ctx: &Context, state: &mut State) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &multisample_view,
-                resolve_target: Some(&view),
+                view: &view,
+                resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
