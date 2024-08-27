@@ -1,10 +1,10 @@
 
-use rendering_engine::{state::State, vertex::Vertex};
+use rendering_engine::{state::State, vertex::Vertex, camera::Camera2D};
 
 use wgpu::{include_wgsl, util::{DeviceExt, RenderEncoder}};
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
-    keyboard::{KeyCode, PhysicalKey}, platform::{wayland::WindowBuilderExtWayland, x11::WindowBuilderExtX11},
+    keyboard::{KeyCode, PhysicalKey},
 };
 
 struct Context {
@@ -13,17 +13,20 @@ struct Context {
     index_buffer: wgpu::Buffer,
     num_indices: u32,
     num_vertices: u32,
+    camera: Camera2D,
 }
 
 impl Context {
     fn new(state: &State) -> Self {
+
+        let camera = Camera2D::new(state);
 
         let shader = state.device.create_shader_module(include_wgsl!("circle.wgsl"));
 
         let pipeline_layout = state.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&camera.bind_group_layout],
                 push_constant_ranges: &[],
             }
         );
@@ -92,16 +95,17 @@ impl Context {
             index_buffer,
             num_indices,
             num_vertices,
+            camera,
         }
     }
 }
 
 #[rustfmt::skip]
 const VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.5, -0.5,  0.0], color: [1.0, 0.0, 0.0] },
-    Vertex { position: [ 0.5, -0.5,  0.0], color: [0.0, 1.0, 0.0] },
-    Vertex { position: [ 0.5,  0.5,  0.0], color: [0.0, 0.0, 1.0] },
-    Vertex { position: [-0.5,  0.5,  0.0], color: [1.0, 1.0, 1.0] },
+    Vertex { position: [-222.0, -222.0,  0.0], color: [1.0, 0.0, 0.0] },
+    Vertex { position: [ 222.0, -222.0,  0.0], color: [0.0, 1.0, 0.0] },
+    Vertex { position: [ 222.0,  222.0,  0.0], color: [0.0, 0.0, 1.0] },
+    Vertex { position: [-222.0,  222.0,  0.0], color: [1.0, 1.0, 1.0] },
 ];
 
 #[rustfmt::skip]
@@ -126,7 +130,7 @@ async fn run() {
 
     let mut state: State = State::new(&window).await;
 
-    let context = Context::new(&state);
+    let mut context = Context::new(&state);
 
     #[allow(clippy::collapsible_match)]
     let _ = event_loop.run(move |event, control_flow| match event {
@@ -150,6 +154,9 @@ async fn run() {
             }
             WindowEvent::Resized(new_size) => {
                 state.resize(*new_size);
+                if context.camera.scale_with_window {
+                    context.camera.resize(*new_size, &state);
+                }
             }
             _ => {}
         },
@@ -183,6 +190,7 @@ fn render(ctx: &Context, state: &mut State) {
         });
 
         render_pass.set_pipeline(&ctx.render_pipeline);
+        render_pass.set_bind_group(0, &ctx.camera.bind_group, &[]);
         render_pass.set_vertex_buffer(0, ctx.vertex_buffer.slice(..));
         render_pass.set_index_buffer(ctx.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.draw_indexed(0..ctx.num_indices, 0, 0..1);
