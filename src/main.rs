@@ -4,7 +4,10 @@ use physics_engine::{ctx::Ctx, state::*};
 #[tokio::main]
 async fn main() {
     let event_loop = winit::event_loop::EventLoopBuilder::new().build().unwrap();
-    let window = winit::window::WindowBuilder::new().build(&event_loop).unwrap();
+    let window = winit::window::WindowBuilder::new()
+        .with_title("Cum: the gamme")
+        .with_maximized(true)
+        .build(&event_loop).unwrap();
 
     let mut state = State::new(&window).await;
     let mut ctx = Ctx::new(&state);

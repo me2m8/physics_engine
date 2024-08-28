@@ -105,6 +105,26 @@ impl<'a> State<'a> {
         self.config.height = new_size.height;
 
         self.surface.configure(&self.device, &self.config);
+        self.multisample_texture = self.create_multisample_texture();
+    }
+
+    fn create_multisample_texture(&self) -> wgpu::Texture {
+        self.device.create_texture(
+            &wgpu::TextureDescriptor {
+                label: Some("Multisample Texture"),
+                size: wgpu::Extent3d {
+                    width: self.config.width,
+                    height: self.config.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: self.sample_count,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            }
+        )
     }
 
     pub fn window(&self) -> &winit::window::Window {
