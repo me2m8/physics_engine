@@ -1,8 +1,11 @@
 
+use cgmath::Vector2;
 use physics_engine::{ctx::Ctx, state::*};
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+
     let event_loop = winit::event_loop::EventLoopBuilder::new().build().unwrap();
     let window = winit::window::WindowBuilder::new()
         .with_title("Cum: the gamme")
@@ -10,7 +13,7 @@ async fn main() {
         .build(&event_loop).unwrap();
 
     let mut state = State::new(&window).await;
-    let mut ctx = Ctx::new(&state);
+    let mut ctx = Ctx::new(&state, Vector2::new(1440, 720));
 
     #[allow(clippy::collapsible_match)]
     let _ = event_loop.run(move |event, control_flow| match event {
@@ -26,6 +29,9 @@ async fn main() {
                         }, 
                     ..
                 } => control_flow.exit(),
+                winit::event::WindowEvent::KeyboardInput { event, .. } => {
+                    ctx.camera.process_input(event);
+                }
                 winit::event::WindowEvent::RedrawRequested => {
                     // Do some rendering and stuff
                     update(&state, &mut ctx);
@@ -73,14 +79,21 @@ fn render(state: &State, ctx: &Ctx) {
             }
         );
 
-        render_pass.set_pipeline(&ctx.pipeline);
+        render_pass.set_pipeline(&ctx.wireframe_render.pipeline);
         render_pass.set_bind_group(0, &ctx.camera.bind_group, &[]);
 
-        render_pass.set_vertex_buffer(0, ctx.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, ctx.instance_buffer.slice(..));
-        render_pass.set_index_buffer(ctx.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.set_vertex_buffer(0, ctx.wireframe_render.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(ctx.wireframe_render.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-        render_pass.draw_indexed(0..ctx.num_indicies, 0, 0..ctx.num_instances);
+        render_pass.draw_indexed(0..ctx.wireframe_render.num_indicies, 0, 0..ctx.wireframe_render.num_instances);
+
+        // render_pass.set_pipeline(&ctx.circle_render.pipeline);
+
+        // render_pass.set_vertex_buffer(0, ctx.circle_render.vertex_buffer.slice(..));
+        // render_pass.set_vertex_buffer(1, ctx.circle_render.instance_buffer.slice(..));
+        // render_pass.set_index_buffer(ctx.circle_render.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+        // render_pass.draw_indexed(0..ctx.circle_render.num_indicies, 0, 0..ctx.circle_render.num_instances);
     }
 
     state.queue().submit(std::iter::once(encoder.finish()));
@@ -88,5 +101,6 @@ fn render(state: &State, ctx: &Ctx) {
 }
 
 fn update(state: &State, ctx: &mut Ctx) {
+    ctx.camera.update(state);
     ctx.physics_process(state);
 }

@@ -15,6 +15,7 @@ struct VertexOutput {
 }
 
 struct Camera2D {
+    position: vec2<f32>,
     resolution: vec2<f32>,
 }
 
@@ -29,7 +30,7 @@ struct Camera2D {
     var out: VertexOutput;
 
     let position = instance.position + model.frag_coord * instance.radius;
-    let transformed_position = position / camera2d.resolution;
+    let transformed_position = (position - camera2d.position) / camera2d.resolution;
 
     out.clip_position = vec4<f32>(transformed_position, 0.0, 1.0);
     out.frag_coord = model.frag_coord;
