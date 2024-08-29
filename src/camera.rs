@@ -29,8 +29,14 @@ pub struct RawCamera2D {
 
 impl Camera2D {
     pub fn new(state: &State) -> Self {
+        let surface_width = state.config().width;
+        let surface_height = state.config().height;
+
         let width = state.config().width as f32;
         let height = state.config().height as f32;
+
+        println!("surface width and height: {surface_width:?}, {surface_height:?}");
+        println!("camera width and height: {width:?}, {height:?}");
 
         let raw = RawCamera2D {
             position: [0., 0.],

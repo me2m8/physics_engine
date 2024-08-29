@@ -215,11 +215,12 @@ pub mod circle {
 }
 
 pub mod wireframe {
-    use cgmath::{InnerSpace, Vector2};
+    use cgmath::{InnerSpace, Vector2, Zero};
     use wgpu::{util::DeviceExt, vertex_attr_array};
 
     use crate::{camera::Camera2D, state::State};
 
+    #[derive(Clone, Debug)]
     pub struct Wireframe {
         vertices: Vec<Vector2<f32>>,
         line_width: f32,
@@ -254,20 +255,16 @@ pub mod wireframe {
         }
     }
 
-    #[rustfmt::skip]
-    const INDICIES: &[u16] = &[
-        0, 1,
-        1, 2,
-        2, 3,
-        3, 0,
-    ];
-
     impl Wireframe {
         pub fn new(vertices: impl Into<Vec<Vector2<f32>>>, line_width: f32) -> Self {
             Self {
                 vertices: vertices.into(),
                 line_width,
             }
+        }
+
+        pub fn set_vertices(&mut self, vertices: impl Into<Vec<Vector2<f32>>>) {
+            self.vertices = vertices.into();
         }
 
         fn vertices(&self) -> &[Vector2<f32>] {
@@ -286,22 +283,20 @@ pub mod wireframe {
 
             let pos_mod = |a: isize, b: isize| (((a % b) + b) % b) as usize;
 
-            let calculate_normal_to_diag = |i: isize| -> Vector2<f32> {
-                dbg!(i - 1 % num_vertices);
+            let calculate_offset_normal = |i: isize| -> Vector2<f32> {
+                let rel_next = vertices[pos_mod(i + 1, num_vertices)] - vertices[i as usize];
+                let rel_prior = vertices[pos_mod(i - 1, num_vertices)] - vertices[i as usize];
 
-                let neighbour_1 = vertices[pos_mod(i + 1, num_vertices)];
-                let neighbour_2 = vertices[pos_mod(i - 1, num_vertices)];
-                let difference = neighbour_2 - neighbour_1;
+                let mag = rel_next.magnitude().min(rel_prior.magnitude());
 
-                let perpenticular_vector = Vector2::new(-difference.y, difference.x);
-
-                perpenticular_vector.normalize()
+                let diff = rel_prior.normalize() * mag - rel_next.normalize() * mag;
+                Vector2::new(-diff.y, diff.x).normalize()
             };
 
             let mut new_vertices: Vec<WireframeVertex> = Vec::new();
 
             (0..num_vertices).for_each(|i: isize| {
-                let perp_normal = calculate_normal_to_diag(i);
+                let perp_normal = calculate_offset_normal(i);
 
                 new_vertices.push(WireframeVertex {
                     position: (vertices[i as usize] + perp_normal * diagonal_width).into(),
@@ -393,7 +388,7 @@ pub mod wireframe {
                         strip_index_format: None,
                         front_face: wgpu::FrontFace::Ccw,
                         cull_mode: Some(wgpu::Face::Back),
-                        polygon_mode: wgpu::PolygonMode::Line,
+                        polygon_mode: wgpu::PolygonMode::Fill,
                         unclipped_depth: false,
                         conservative: false,
                     },
@@ -445,8 +440,6 @@ pub mod wireframe {
                         acc
                     },
                 );
-
-            dbg!(&vertices, &indicies);
 
             let vertex_buffer =
                 state

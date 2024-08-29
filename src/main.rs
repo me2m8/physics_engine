@@ -1,6 +1,6 @@
 
 use cgmath::Vector2;
-use physics_engine::{ctx::Ctx, state::*};
+use physics_engine::{ctx::Ctx, instances::wireframe::Wireframe, state::*};
 
 #[tokio::main]
 async fn main() {
@@ -40,6 +40,16 @@ async fn main() {
                 winit::event::WindowEvent::Resized(new_size) => {
                     state.resize(new_size);
                     ctx.camera.scale_with_view(&state, new_size);
+
+                    let new_border = [
+                        Vector2::new((new_size.width as f32), (new_size.height as f32)),
+                        Vector2::new(-(new_size.width as f32), (new_size.height as f32)),
+                        Vector2::new(-(new_size.width as f32), -(new_size.height as f32)),
+                        Vector2::new((new_size.width as f32), -(new_size.height as f32)),
+                    ];
+
+                    ctx.border.set_vertices(new_border);
+                    ctx.wireframe_render.update_buffers(&state, &[ctx.border.clone()]);
                 }
                 _ => {}
             }
@@ -87,13 +97,13 @@ fn render(state: &State, ctx: &Ctx) {
 
         render_pass.draw_indexed(0..ctx.wireframe_render.num_indicies, 0, 0..ctx.wireframe_render.num_instances);
 
-        // render_pass.set_pipeline(&ctx.circle_render.pipeline);
+        render_pass.set_pipeline(&ctx.circle_render.pipeline);
 
-        // render_pass.set_vertex_buffer(0, ctx.circle_render.vertex_buffer.slice(..));
-        // render_pass.set_vertex_buffer(1, ctx.circle_render.instance_buffer.slice(..));
-        // render_pass.set_index_buffer(ctx.circle_render.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.set_vertex_buffer(0, ctx.circle_render.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, ctx.circle_render.instance_buffer.slice(..));
+        render_pass.set_index_buffer(ctx.circle_render.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-        // render_pass.draw_indexed(0..ctx.circle_render.num_indicies, 0, 0..ctx.circle_render.num_instances);
+        render_pass.draw_indexed(0..ctx.circle_render.num_indicies, 0, 0..ctx.circle_render.num_instances);
     }
 
     state.queue().submit(std::iter::once(encoder.finish()));
