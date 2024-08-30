@@ -1,19 +1,27 @@
 
 use cgmath::Vector2;
-use physics_engine::{ctx::Ctx, instances::wireframe::Wireframe, state::*};
+use physics_engine::{ctx::Ctx, instances::Renderer as _, state::*, *};
+
+use tracing::Level;
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+     // tracing_subscriber::fmt()
+     //     .with_max_level(Level::TRACE)
+     //     .with_timer(tracing_subscriber::fmt::time::uptime())
+     //     .init();
 
     let event_loop = winit::event_loop::EventLoopBuilder::new().build().unwrap();
     let window = winit::window::WindowBuilder::new()
         .with_title("Cum: the gamme")
-        .with_maximized(true)
+        .with_active(true)
+        .with_inner_size(winit::dpi::PhysicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
+        // .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
         .build(&event_loop).unwrap();
 
+
     let mut state = State::new(&window).await;
-    let mut ctx = Ctx::new(&state, Vector2::new(1440, 720));
+    let mut ctx = Ctx::new(&state, Vector2::new(WINDOW_WIDTH, WINDOW_HEIGHT));
 
     #[allow(clippy::collapsible_match)]
     let _ = event_loop.run(move |event, control_flow| match event {
@@ -33,23 +41,31 @@ async fn main() {
                     ctx.camera.process_input(event);
                 }
                 winit::event::WindowEvent::RedrawRequested => {
+                    ctx.update_dt();
+
                     // Do some rendering and stuff
                     update(&state, &mut ctx);
-                    render(&state, &ctx);
+                    render(&mut state, &ctx);
                 }
                 winit::event::WindowEvent::Resized(new_size) => {
+                    println!("Resizing to: {new_size:#?}");
+
                     state.resize(new_size);
                     ctx.camera.scale_with_view(&state, new_size);
 
+                    let half_bw = BORDER_WIDTH / 2.;
+                    let half_width = new_size.width as f32;
+                    let half_height = new_size.height as f32;
+
                     let new_border = [
-                        Vector2::new((new_size.width as f32), (new_size.height as f32)),
-                        Vector2::new(-(new_size.width as f32), (new_size.height as f32)),
-                        Vector2::new(-(new_size.width as f32), -(new_size.height as f32)),
-                        Vector2::new((new_size.width as f32), -(new_size.height as f32)),
+                        Vector2::new(half_width - half_bw, half_height - half_bw),
+                        Vector2::new(-(half_width - half_bw), half_height - half_bw),
+                        Vector2::new(-(half_width - half_bw), -(half_height - half_bw)),
+                        Vector2::new(half_width - half_bw, -(half_height - half_bw)),
                     ];
 
                     ctx.border.set_vertices(new_border);
-                    ctx.wireframe_render.update_buffers(&state, &[ctx.border.clone()]);
+                    ctx.polygon_frame_render.update_buffers(&state, &[ctx.border.clone()]);
                 }
                 _ => {}
             }
@@ -59,7 +75,8 @@ async fn main() {
     });
 }
 
-fn render(state: &State, ctx: &Ctx) {
+fn render(state: &mut State, ctx: &Ctx) {
+
     let mut encoder = state.device().create_command_encoder(
         &wgpu::CommandEncoderDescriptor {
             label: Some("Command Encoder"),
@@ -79,7 +96,12 @@ fn render(state: &State, ctx: &Ctx) {
                     view: &multisample_view,
                     resolve_target: Some(&view),
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.2,
+                            g: 0.2,
+                            b: 0.2,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -89,28 +111,24 @@ fn render(state: &State, ctx: &Ctx) {
             }
         );
 
-        render_pass.set_pipeline(&ctx.wireframe_render.pipeline);
         render_pass.set_bind_group(0, &ctx.camera.bind_group, &[]);
 
-        render_pass.set_vertex_buffer(0, ctx.wireframe_render.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(ctx.wireframe_render.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-
-        render_pass.draw_indexed(0..ctx.wireframe_render.num_indicies, 0, 0..ctx.wireframe_render.num_instances);
-
-        render_pass.set_pipeline(&ctx.circle_render.pipeline);
-
-        render_pass.set_vertex_buffer(0, ctx.circle_render.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, ctx.circle_render.instance_buffer.slice(..));
-        render_pass.set_index_buffer(ctx.circle_render.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-
-        render_pass.draw_indexed(0..ctx.circle_render.num_indicies, 0, 0..ctx.circle_render.num_instances);
+        ctx.circle_render.render(&mut render_pass);
+        ctx.polygon_frame_render.render(&mut render_pass);
     }
 
     state.queue().submit(std::iter::once(encoder.finish()));
     output.present();
+
+    let mut fps = 0.0;
+    let secs = ctx.dt().as_secs_f32();
+    if secs != 0.0 {
+        fps = 1.0 / secs;
+    }
+
+    log::log!(log::Level::Info, "FPS: {fps:?}");
 }
 
 fn update(state: &State, ctx: &mut Ctx) {
-    ctx.camera.update(state);
     ctx.physics_process(state);
 }

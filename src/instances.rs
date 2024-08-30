@@ -2,6 +2,10 @@ use crate::{camera::Camera2D, state::State};
 use cgmath::{Vector2, Vector4};
 use wgpu::util::DeviceExt;
 
+pub trait Renderer {
+    fn render(&self, render_pass: &mut wgpu::RenderPass);
+}
+
 pub mod circle {
 
     use super::*;
@@ -212,28 +216,42 @@ pub mod circle {
             self.num_instances = num_instances;
         }
     }
+
+    impl Renderer for CircleRender {
+        fn render(&self, render_pass: &mut wgpu::RenderPass) {
+            render_pass.set_pipeline(&self.pipeline);
+
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+            render_pass.draw_indexed(0..self.num_indicies, 0, 0..self.num_instances);
+        }
+    }
 }
 
-pub mod wireframe {
-    use cgmath::{InnerSpace, Vector2, Zero};
+pub mod polygon_frame {
+    use cgmath::{InnerSpace, Vector2};
     use wgpu::{util::DeviceExt, vertex_attr_array};
 
     use crate::{camera::Camera2D, state::State};
 
+    use super::*;
+
     #[derive(Clone, Debug)]
-    pub struct Wireframe {
+    pub struct PolygonFrame {
         vertices: Vec<Vector2<f32>>,
-        line_width: f32,
+        width: f32,
     }
 
     #[repr(C)]
     #[derive(Copy, Clone, Debug, bytemuck::Zeroable, bytemuck::Pod)]
-    pub struct WireframeVertex {
+    pub struct PolygonFrameVertex {
         pub position: [f32; 2],
         pub color: [f32; 4],
     }
 
-    pub struct WireframeRender {
+    pub struct PolygonFrameRender {
         pub pipeline: wgpu::RenderPipeline,
         pub vertex_buffer: wgpu::Buffer,
         pub index_buffer: wgpu::Buffer,
@@ -242,24 +260,24 @@ pub mod wireframe {
         pub num_instances: u32,
     }
 
-    impl WireframeVertex {
+    impl PolygonFrameVertex {
         const ATTRIBS: &'static [wgpu::VertexAttribute] =
             &vertex_attr_array![0 => Float32x2, 1 => Float32x4];
 
         pub const fn desc() -> wgpu::VertexBufferLayout<'static> {
             wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<WireframeVertex>() as wgpu::BufferAddress,
+                array_stride: std::mem::size_of::<PolygonFrameVertex>() as wgpu::BufferAddress,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: Self::ATTRIBS,
             }
         }
     }
 
-    impl Wireframe {
+    impl PolygonFrame {
         pub fn new(vertices: impl Into<Vec<Vector2<f32>>>, line_width: f32) -> Self {
             Self {
                 vertices: vertices.into(),
-                line_width,
+                width: line_width,
             }
         }
 
@@ -271,7 +289,7 @@ pub mod wireframe {
             &self.vertices
         }
 
-        pub fn to_vertices(&self) -> (Vec<WireframeVertex>, Vec<u16>) {
+        pub fn to_vertices(&self) -> (Vec<PolygonFrameVertex>, Vec<u16>) {
             use std::f32::consts::FRAC_1_SQRT_2;
 
             const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
@@ -279,7 +297,7 @@ pub mod wireframe {
             let vertices = self.vertices();
             let num_vertices = vertices.len() as isize;
 
-            let diagonal_width = self.line_width * FRAC_1_SQRT_2;
+            let diagonal_width = self.width * FRAC_1_SQRT_2;
 
             let pos_mod = |a: isize, b: isize| (((a % b) + b) % b) as usize;
 
@@ -293,16 +311,16 @@ pub mod wireframe {
                 Vector2::new(-diff.y, diff.x).normalize()
             };
 
-            let mut new_vertices: Vec<WireframeVertex> = Vec::new();
+            let mut new_vertices: Vec<PolygonFrameVertex> = Vec::new();
 
             (0..num_vertices).for_each(|i: isize| {
                 let perp_normal = calculate_offset_normal(i);
 
-                new_vertices.push(WireframeVertex {
+                new_vertices.push(PolygonFrameVertex {
                     position: (vertices[i as usize] + perp_normal * diagonal_width).into(),
                     color: WHITE,
                 });
-                new_vertices.push(WireframeVertex {
+                new_vertices.push(PolygonFrameVertex {
                     position: (vertices[i as usize] - perp_normal * diagonal_width).into(),
                     color: WHITE,
                 });
@@ -333,7 +351,7 @@ pub mod wireframe {
         }
     }
 
-    impl WireframeRender {
+    impl PolygonFrameRender {
         pub fn new(state: &State, camera: &Camera2D) -> Self {
             let shader_module = state
                 .device()
@@ -404,7 +422,7 @@ pub mod wireframe {
                         module: &shader_module,
                         entry_point: "vs_main",
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[WireframeVertex::desc()],
+                        buffers: &[PolygonFrameVertex::desc()],
                     },
                     fragment: Some(wgpu::FragmentState {
                         module: &shader_module,
@@ -428,8 +446,8 @@ pub mod wireframe {
             }
         }
 
-        pub fn update_buffers(&mut self, state: &State, wireframes: &[Wireframe]) {
-            let (vertices, indicies): (Vec<WireframeVertex>, Vec<u16>) =
+        pub fn update_buffers(&mut self, state: &State, wireframes: &[PolygonFrame]) {
+            let (vertices, indicies): (Vec<PolygonFrameVertex>, Vec<u16>) =
                 wireframes.iter().map(|e| e.to_vertices()).enumerate().fold(
                     (vec![], vec![]),
                     |mut acc, (i, (mut verticies, indicies))| {
@@ -464,6 +482,17 @@ pub mod wireframe {
             self.vertex_buffer = vertex_buffer;
             self.index_buffer = index_buffer;
             self.num_indicies = num_indicies;
+        }
+    }
+
+    impl Renderer for PolygonFrameRender {
+        fn render(&self, render_pass: &mut wgpu::RenderPass) {
+            render_pass.set_pipeline(&self.pipeline);
+
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+            render_pass.draw_indexed(0..self.num_indicies, 0, 0..self.num_instances);
         }
     }
 }

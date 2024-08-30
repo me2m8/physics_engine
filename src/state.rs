@@ -61,8 +61,8 @@ impl<'a> State<'a> {
             width: size.width,
             height: size.height,
             view_formats: vec![],
-            present_mode: surface_caps.present_modes[0],
-            alpha_mode: surface_caps.alpha_modes[0],
+            present_mode: dbg!(surface_caps.present_modes)[0], 
+            alpha_mode: dbg!(surface_caps.alpha_modes)[0],
             desired_maximum_frame_latency: 2,
         };
 

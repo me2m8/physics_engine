@@ -28,15 +28,9 @@ pub struct RawCamera2D {
 }
 
 impl Camera2D {
-    pub fn new(state: &State) -> Self {
-        let surface_width = state.config().width;
-        let surface_height = state.config().height;
-
-        let width = state.config().width as f32;
-        let height = state.config().height as f32;
-
-        println!("surface width and height: {surface_width:?}, {surface_height:?}");
-        println!("camera width and height: {width:?}, {height:?}");
+    pub fn new(state: &State, viewport_size: Vector2<f32>) -> Self {
+        let width = viewport_size.x;
+        let height = viewport_size.y;
 
         let raw = RawCamera2D {
             position: [0., 0.],
@@ -176,21 +170,6 @@ impl Camera2D {
                 ..
             } => self.controller.right_arrow_pressed = state == winit::event::ElementState::Pressed,
             _ => {}
-        }
-    }
-
-    pub fn update(&mut self, state: &State) {
-        let mut vel = Vector2::<f32>::zero();
-
-        const SPEED: f32 = 20.0;
-
-        vel.x = self.controller.right_arrow_pressed as u32 as f32 - self.controller.left_arrow_pressed as u32 as f32;
-        vel.y = self.controller.up_arrow_pressed as u32 as f32 - self.controller.down_arrow_pressed as u32 as f32;
-
-        if vel != Vector2::<f32>::zero() {
-            let new_pos = self.position() + vel.normalize() * SPEED;
-
-            self.update_position(state, new_pos);
         }
     }
 

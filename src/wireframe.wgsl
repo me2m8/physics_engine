@@ -22,7 +22,7 @@ struct Camera2D {
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    let transformed_position = (model.position - camera2d.position) / camera2d.resolution;
+    let transformed_position = (model.position - camera2d.position) / (camera2d.resolution);
 
     out.clip_position = vec4<f32>(transformed_position, 0.0, 1.0);
     out.color = model.color;

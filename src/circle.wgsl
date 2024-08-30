@@ -30,7 +30,7 @@ struct Camera2D {
     var out: VertexOutput;
 
     let position = instance.position + model.frag_coord * instance.radius;
-    let transformed_position = (position - camera2d.position) / camera2d.resolution;
+    let transformed_position = (position - camera2d.position) / (camera2d.resolution);
 
     out.clip_position = vec4<f32>(transformed_position, 0.0, 1.0);
     out.frag_coord = model.frag_coord;
@@ -45,8 +45,10 @@ struct Camera2D {
 ) -> @location(0) vec4<f32> {
     let dist = length(in.frag_coord);
 
+    let rgb_color = exp(log((in.color.xyz + 0.055) / 1.055) * 2.);
+
     if (dist < 1.0) {
-        return in.color;
+        return vec4<f32>(rgb_color, 1.0);
     } else {
         return vec4<f32>(1.0, 1.0, 1.0, 0.0);
     }
