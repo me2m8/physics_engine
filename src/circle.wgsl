@@ -12,6 +12,7 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) frag_coord: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) radius: f32,
 }
 
 struct Camera2D {
@@ -30,11 +31,12 @@ struct Camera2D {
     var out: VertexOutput;
 
     let position = instance.position + model.frag_coord * instance.radius;
-    let transformed_position = (position - camera2d.position) / (camera2d.resolution);
+    let transformed_position = (position - camera2d.position) / (camera2d.resolution / 2.);
 
     out.clip_position = vec4<f32>(transformed_position, 0.0, 1.0);
     out.frag_coord = model.frag_coord;
     out.color = instance.color;
+    out.radius = instance.radius;
 
     return out;
 }
@@ -43,13 +45,10 @@ struct Camera2D {
 @fragment fn fs_main(
     in: VertexOutput,
 ) -> @location(0) vec4<f32> {
-    let dist = length(in.frag_coord);
+    let crispness_factor = in.radius / 2.;
+    let dist = crispness_factor - length(in.frag_coord) * crispness_factor;
 
     let rgb_color = exp(log((in.color.xyz + 0.055) / 1.055) * 2.);
 
-    if (dist < 1.0) {
-        return vec4<f32>(rgb_color, 1.0);
-    } else {
-        return vec4<f32>(1.0, 1.0, 1.0, 0.0);
-    }
+    return vec4<f32>(rgb_color, dist);
 }

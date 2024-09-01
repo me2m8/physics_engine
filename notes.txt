@@ -1,0 +1,4 @@
+
+Concepts to read remember:
+
+* Continuous Collision Detection

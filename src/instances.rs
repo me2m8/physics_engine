@@ -234,8 +234,6 @@ pub mod polygon_frame {
     use cgmath::{InnerSpace, Vector2};
     use wgpu::{util::DeviceExt, vertex_attr_array};
 
-    use crate::{camera::Camera2D, state::State};
-
     use super::*;
 
     #[derive(Clone, Debug)]
@@ -285,6 +283,10 @@ pub mod polygon_frame {
             self.vertices = vertices.into();
         }
 
+        pub fn set_width(&mut self, width: f32) {
+            self.width = width;
+        }
+
         fn vertices(&self) -> &[Vector2<f32>] {
             &self.vertices
         }
@@ -293,26 +295,28 @@ pub mod polygon_frame {
             use std::f32::consts::FRAC_1_SQRT_2;
 
             const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+            const _BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
             let vertices = self.vertices();
             let num_vertices = vertices.len() as isize;
 
+            // same as doing sqrt(2) / 2, gets half the diagonal
             let diagonal_width = self.width * FRAC_1_SQRT_2;
 
             let pos_mod = |a: isize, b: isize| (((a % b) + b) % b) as usize;
 
+            // Calculate the normalized vector halfway between the neighbouring points
             let calculate_offset_normal = |i: isize| -> Vector2<f32> {
                 let rel_next = vertices[pos_mod(i + 1, num_vertices)] - vertices[i as usize];
                 let rel_prior = vertices[pos_mod(i - 1, num_vertices)] - vertices[i as usize];
 
-                let mag = rel_next.magnitude().min(rel_prior.magnitude());
-
-                let diff = rel_prior.normalize() * mag - rel_next.normalize() * mag;
+                let diff = rel_prior.normalize() - rel_next.normalize();
                 Vector2::new(-diff.y, diff.x).normalize()
             };
 
             let mut new_vertices: Vec<PolygonFrameVertex> = Vec::new();
 
+            // Create the vertices at each polygon vertex
             (0..num_vertices).for_each(|i: isize| {
                 let perp_normal = calculate_offset_normal(i);
 
@@ -328,6 +332,7 @@ pub mod polygon_frame {
 
             let mut indicies: Vec<u16> = Vec::new();
 
+            // insert the correct indicies to be able to render the model
             for i in 0..num_vertices {
                 let i = (i * 2) as u16;
 
@@ -341,13 +346,6 @@ pub mod polygon_frame {
             }
 
             (new_vertices, indicies)
-
-            // let new_vertices = vec![
-            //     WireframeVertex { position: (vertices[i] + perp_normal * diagonal_width).into(), color: WHITE },
-            //     WireframeVertex { position: (vertices[i + 1 % num_vertices] + next_perp_normal * diagonal_width).into(), color: WHITE },
-            //     WireframeVertex { position: (vertices[i + 1 % num_vertices] - next_perp_normal * diagonal_width).into(), color: WHITE },
-            //     WireframeVertex { position: (vertices[i] - perp_normal * diagonal_width).into(), color: WHITE },
-            // ];
         }
     }
 
@@ -355,7 +353,7 @@ pub mod polygon_frame {
         pub fn new(state: &State, camera: &Camera2D) -> Self {
             let shader_module = state
                 .device()
-                .create_shader_module(wgpu::include_wgsl!("wireframe.wgsl"));
+                .create_shader_module(wgpu::include_wgsl!("polygon_frame.wgsl"));
 
             let vertex_buffer =
                 state
@@ -446,18 +444,19 @@ pub mod polygon_frame {
             }
         }
 
-        pub fn update_buffers(&mut self, state: &State, wireframes: &[PolygonFrame]) {
-            let (vertices, indicies): (Vec<PolygonFrameVertex>, Vec<u16>) =
-                wireframes.iter().map(|e| e.to_vertices()).enumerate().fold(
-                    (vec![], vec![]),
-                    |mut acc, (i, (mut verticies, indicies))| {
-                        acc.0.append(&mut verticies);
-                        acc.1
-                            .append(&mut indicies.iter().map(|e| e + i as u16).collect());
+        pub fn update_buffers(&mut self, state: &State, polygon_frames: &[PolygonFrame]) {
 
-                        acc
-                    },
-                );
+            let (vertices, indicies): (Vec<PolygonFrameVertex>, Vec<u16>) = polygon_frames
+                .iter()
+                .map(|e| e.to_vertices())
+                .fold((vec![], vec![]), |mut acc, (mut verticies, indicies)| {
+                    acc.1
+                        .append(&mut indicies.iter().map(|e| e + acc.0.len() as u16).collect());
+
+                    acc.0.append(&mut verticies);
+
+                    acc
+                });
 
             let vertex_buffer =
                 state
