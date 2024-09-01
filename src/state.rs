@@ -9,12 +9,12 @@ pub struct State<'a> {
     device: wgpu::Device,
     queue: wgpu::Queue,
 
-    window: &'a winit::window::Window,
+    window: &'a dyn winit::window::Window,
 }
 
 // For more functional methods
 impl<'a> State<'a> {
-    pub async fn new(window: &'a winit::window::Window) -> Self {
+    pub async fn new(window: &'a dyn winit::window::Window) -> Self {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -109,9 +109,6 @@ impl<'a> State<'a> {
         self.multisample_texture = self.create_multisample_texture();
     }
 
-    pub fn handle_window_events(&mut self, event: winit::event::WindowEvent) {
-    }
-
     fn create_multisample_texture(&self) -> wgpu::Texture {
         self.device.create_texture(
             &wgpu::TextureDescriptor {
@@ -134,7 +131,7 @@ impl<'a> State<'a> {
 
 // For general getter/setter functions
 impl<'a> State<'a> {
-    pub fn window(&self) -> &winit::window::Window {
+    pub fn window(&self) -> &dyn winit::window::Window {
         self.window
     }
 

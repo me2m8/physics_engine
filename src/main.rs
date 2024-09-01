@@ -1,54 +1,24 @@
 
+use std::sync::mpsc;
+
+use application::Application;
 use cgmath::Vector2;
 use physics_engine::{ctx::Ctx, instances::Renderer as _, state::*, *};
 
 #[tokio::main]
 async fn main() {
-     // tracing_subscriber::fmt()
-     //     .with_max_level(tracing::Level::TRACE)
-     //     .with_timer(tracing_subscriber::fmt::time::uptime())
-     //     .init();
-
-    let event_loop = winit::event_loop::EventLoopBuilder::new().build().unwrap();
-    let window = winit::window::WindowBuilder::new()
-        .with_title("Cum: the gamme")
-        .with_active(true)
-        .with_inner_size(winit::dpi::PhysicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
-        .build(&event_loop).unwrap();
+    // tracing_subscriber::fmt()
+    //     .with_max_level(tracing::Level::TRACE)
+    //     .with_timer(tracing_subscriber::fmt::time::uptime())
+    //     .init();
 
 
-    let mut state = State::new(&window).await;
-    let mut ctx = Ctx::new(&state, Vector2::new(VIEWPORT_WIDTH, VIEWPORT_HEIGHT));
+    let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    let (tx, rx) = mpsc::channel();
 
-    #[allow(clippy::collapsible_match)]
-    let _ = event_loop.run(move |event, control_flow| match event {
-        winit::event::Event::WindowEvent { window_id, event } if window_id == state.window().id() => {
-            match event {
-                winit::event::WindowEvent::CloseRequested 
-                | winit::event::WindowEvent::KeyboardInput { 
-                    event:
-                        winit::event::KeyEvent {
-                            physical_key: winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape),
-                            state: winit::event::ElementState::Pressed,
-                            ..
-                        }, 
-                    ..
-                } => control_flow.exit(),
-                winit::event::WindowEvent::KeyboardInput { .. } => {}
-                winit::event::WindowEvent::RedrawRequested => {
-                    process_frame(&mut state, &mut ctx);
-                }
-                winit::event::WindowEvent::Resized(new_size) => {
-                    println!("Resizing to: {new_size:#?}");
+    let app = Application::new(&event_loop, rx, tx);
 
-                    state.resize(new_size);
-                }
-                _ => {}
-            }
-        },
-        winit::event::Event::AboutToWait => state.window().request_redraw(),
-        _ => {}
-    });
+    let _ = event_loop.run_app(app);
 }
 
 fn process_frame(state: &mut State, ctx: &mut Ctx) {

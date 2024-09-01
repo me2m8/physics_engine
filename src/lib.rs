@@ -6,6 +6,7 @@ pub mod camera;
 pub mod particle;
 pub mod simulation_context;
 pub mod render_context;
+pub mod application;
 
 pub const BORDER_WIDTH: f32 = 0.;
 
