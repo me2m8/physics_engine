@@ -1,8 +1,7 @@
+use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::mpsc::{Receiver, Sender};
-use itertools::Itertools;
-use wgpu::rwh::{HasRawWindowHandle, HasWindowHandle, RawWindowHandle, WindowHandle};
 use wgpu::Surface;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -98,9 +97,9 @@ impl Application {
         &mut self,
         event_loop: &dyn ActiveEventLoop,
         window_type: WindowType,
-        window_attributes: WindowAttributes,
+        mut window_attributes: WindowAttributes,
         _tab_id: Option<String>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<WindowId, Box<dyn Error>> {
         #[cfg(not(target_os = "macos"))]
         if let Some(token) = event_loop.read_token_from_env() {
             startup_notify::reset_activation_token_env();
@@ -120,12 +119,13 @@ impl Application {
         // Insert new window state into windows hashmap
         self.windows.insert(window_id, window_state);
 
-        Ok(())
+        Ok(window_id)
     }
 
-    pub fn handle_action(&mut self, _event_loop: &dyn ActiveEventLoop, action: Action) {
-        if let Action::Ping = action {
-            println!("Pong!")
+    pub fn handle_action(&mut self, event_loop: &dyn ActiveEventLoop, action: Action) {
+        match action {
+            Action::Ping => println!("Pong!"),
+            _ => {}
         }
     }
 
@@ -180,9 +180,11 @@ impl Application {
     }
 
     fn process_key_bindings(key: KeyCode, mods: ModifiersState) -> Option<Action> {
-        KEYBINDS
-            .iter()
-            .find_map(|binding| binding.is_triggered(key, mods).then_some(binding.action))
+        KEYBINDS.iter().find_map(|binding| {
+            binding
+                .is_triggered(key, mods)
+                .then_some(binding.action.clone())
+        })
     }
 }
 
@@ -207,42 +209,8 @@ impl ApplicationHandler for Application {
 
         println!("Monitor Size: {width} x {height}");
 
-        let main_window = self
-            .create_window(event_loop, WindowType::Main, size, None)
+        self.create_window(event_loop, WindowType::Main, size, None)
             .expect("Failed to create window");
-
-        let main_window_handle = self
-            .windows
-            .get(&main_window)
-            .unwrap()
-            .window
-            .window_handle()
-            .unwrap()
-            .as_raw();
-
-        let ui_attributes = unsafe {
-            WindowAttributes::default()
-                .with_decorations(false)
-                .with_inner_size(PhysicalSize {
-                    width: 500,
-                    height: 300,
-                })
-                .with_transparent(true)
-                .with_active(false)
-                .with_visible(true)
-                .with_parent_window(Some(main_window_handle))
-        };
-        let ui_1 = ui_attributes
-            .clone()
-            .with_position(PhysicalPosition { x: 0, y: 0 });
-        let ui_2 = ui_attributes.clone().with_position(PhysicalPosition {
-            x: width - 500,
-            y: 0,
-        });
-        self.create_window_with_attributes(event_loop, WindowType::Ui, ui_1, None)
-            .expect("Should be able to create ui window");
-        self.create_window_with_attributes(event_loop, WindowType::Ui, ui_2, None)
-            .expect("Should be able to create ui window");
     }
 
     fn window_event(
@@ -260,6 +228,10 @@ impl ApplicationHandler for Application {
                 serial: _,
                 token: _,
             } => todo!(),
+            WindowEvent::Moved(position) => {}
+            WindowEvent::CursorMoved { position, .. } => {}
+            WindowEvent::CursorLeft { .. } => {}
+            WindowEvent::CursorEntered { .. } => {}
             WindowEvent::Resized(new_size) => window.resize(new_size),
             WindowEvent::CloseRequested => {
                 println!("Removed window: {window_id:?}");
@@ -288,16 +260,16 @@ impl ApplicationHandler for Application {
                 if f {
                     window.clear_color = wgpu::Color {
                         r: 0.0,
-                        g: 1.0,
-                        b: 0.0,
-                        a: 0.1,
+                        g: 0.3,
+                        b: 1.0,
+                        a: 1.0,
                     }
                 } else {
                     window.clear_color = wgpu::Color {
                         r: 1.0,
                         g: 0.0,
                         b: 0.0,
-                        a: 0.1,
+                        a: 1.0,
                     }
                 }
                 window.window.request_redraw();
@@ -356,9 +328,10 @@ impl ApplicationHandler for Application {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Ping,
+    CreateUiWindow(WindowId, WindowAttributes, String),
     CreateNewMainWindow,
     CreateNewUiWindow,
     CloseWindow,
@@ -380,6 +353,8 @@ pub struct WindowState {
     queue: wgpu::Queue,
 
     // Miscelaneous window information
+    position: PhysicalPosition<i32>,
+    mouse_position: PhysicalPosition<i32>,
     modifiers: ModifiersState,
     clear_color: wgpu::Color,
 
@@ -440,11 +415,13 @@ impl WindowState {
             view_formats: vec![],
         };
 
+        surface.configure(&device, &config);
+
         let clear_color = wgpu::Color {
             r: 0.0,
             g: 0.3,
             b: 1.0,
-            a: 0.6,
+            a: 1.0,
         };
 
         Ok(Self {
@@ -456,6 +433,8 @@ impl WindowState {
             device,
             queue,
 
+            position: Default::default(),
+            mouse_position: Default::default(),
             modifiers: Default::default(),
             clear_color,
 
