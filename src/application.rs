@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::mpsc::{Receiver, Sender};
+use itertools::Itertools;
+use wgpu::rwh::{HasRawWindowHandle, HasWindowHandle, RawWindowHandle, WindowHandle};
 use wgpu::Surface;
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+#[cfg(not(target_os = "macos"))]
 use winit::platform::startup_notify::{
     self, EventLoopExtStartupNotify, WindowAttributesExtStartupNotify,
 };
@@ -19,6 +22,8 @@ pub struct Application {
     wgpu_instance: wgpu::Instance,
 
     windows: HashMap<WindowId, WindowState>,
+
+    monitor_size: PhysicalSize<u32>,
 }
 
 impl Application {
@@ -38,18 +43,34 @@ impl Application {
             sender,
             wgpu_instance,
             windows: Default::default(),
+            monitor_size: Default::default(),
         }
     }
+
+    /// Creates a window based on the window type
+    /// Should only be used to create the main window but can create other template types
     pub fn create_window(
         &mut self,
         event_loop: &dyn ActiveEventLoop,
+        window_type: WindowType,
+        window_size: PhysicalSize<u32>,
         _tab_id: Option<String>,
-    ) -> Result<(), Box<dyn Error>> {
-        let mut window_attributes = WindowAttributes::default()
-            .with_title("Winit Window")
-            .with_transparent(true)
-            .with_active(true);
+    ) -> Result<WindowId, Box<dyn Error>> {
+        #[allow(unused_mut)]
+        let mut window_attributes = match window_type {
+            WindowType::Main => WindowAttributes::default()
+                .with_inner_size(window_size)
+                .with_transparent(true)
+                .with_active(true)
+                .with_title("Winit Window"),
+            WindowType::Ui => WindowAttributes::default()
+                .with_inner_size(window_size)
+                .with_transparent(true)
+                .with_active(false)
+                .with_decorations(false),
+        };
 
+        #[cfg(not(target_os = "macos"))]
         if let Some(token) = event_loop.read_token_from_env() {
             startup_notify::reset_activation_token_env();
 
@@ -61,7 +82,38 @@ impl Application {
         // get window id
         let window_id = window.id();
         // Create window state
-        let window_state = pollster::block_on(WindowState::new(window, &self.wgpu_instance))?;
+        let window_state =
+            pollster::block_on(WindowState::new(window, window_type, &self.wgpu_instance))?;
+
+        println!("Created Window: {window_id:?}");
+
+        // Insert new window state into windows hashmap
+        self.windows.insert(window_id, window_state);
+
+        Ok(window_id)
+    }
+
+    /// Creates a winit window with the given attributes and window type
+    pub fn create_window_with_attributes(
+        &mut self,
+        event_loop: &dyn ActiveEventLoop,
+        window_type: WindowType,
+        window_attributes: WindowAttributes,
+        _tab_id: Option<String>,
+    ) -> Result<(), Box<dyn Error>> {
+        #[cfg(not(target_os = "macos"))]
+        if let Some(token) = event_loop.read_token_from_env() {
+            startup_notify::reset_activation_token_env();
+            window_attributes = window_attributes.with_activation_token(token);
+        }
+
+        let window = event_loop.create_window(window_attributes)?;
+
+        // get window id
+        let window_id = window.id();
+        // Create window state
+        let window_state =
+            pollster::block_on(WindowState::new(window, window_type, &self.wgpu_instance))?;
 
         println!("Created Window: {window_id:?}");
 
@@ -89,13 +141,33 @@ impl Application {
 
         #[allow(clippy::single_match)]
         match _action {
-            Action::CreateNewWindow => {
-                if let Err(err) = self.create_window(event_loop, None) {
+            Action::CreateNewMainWindow => {
+                if let Err(err) =
+                    self.create_window(event_loop, WindowType::Main, self.monitor_size, None)
+                {
+                    println!("Failed to Create Window: {err:?}");
+                }
+            }
+            Action::CreateNewUiWindow => {
+                if let Err(err) = self.create_window(
+                    event_loop,
+                    WindowType::Ui,
+                    PhysicalSize {
+                        width: 100,
+                        height: 50,
+                    },
+                    None,
+                ) {
                     println!("Failed to Create Window: {err:?}");
                 }
             }
             Action::CloseWindow => {
                 self.windows.remove(&window_id);
+
+                println!("Removes window: {window_id:?}");
+                let windows = self.windows.keys().collect_vec();
+
+                println!("Remaining windows: {windows:?}");
 
                 if self.windows.is_empty() {
                     event_loop.exit();
@@ -123,8 +195,54 @@ impl ApplicationHandler for Application {
     }
 
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        self.create_window(event_loop, None)
+        let monitor = event_loop
+            .primary_monitor()
+            .expect("Expected to be able to get primary monitor");
+
+        let video_mode = monitor
+            .current_video_mode()
+            .expect("Expected to be able to get video mode of all monitors");
+        let size = video_mode.size();
+        let PhysicalSize { width, height } = size;
+
+        println!("Monitor Size: {width} x {height}");
+
+        let main_window = self
+            .create_window(event_loop, WindowType::Main, size, None)
             .expect("Failed to create window");
+
+        let main_window_handle = self
+            .windows
+            .get(&main_window)
+            .unwrap()
+            .window
+            .window_handle()
+            .unwrap()
+            .as_raw();
+
+        let ui_attributes = unsafe {
+            WindowAttributes::default()
+                .with_decorations(false)
+                .with_inner_size(PhysicalSize {
+                    width: 500,
+                    height: 300,
+                })
+                .with_transparent(true)
+                .with_active(false)
+                .with_visible(true)
+                .with_parent_window(Some(main_window_handle))
+        };
+        let ui_1 = ui_attributes
+            .clone()
+            .with_position(PhysicalPosition { x: 0, y: 0 });
+        let ui_2 = ui_attributes.clone().with_position(PhysicalPosition {
+            x: width - 500,
+            y: 0,
+        });
+        self.create_window_with_attributes(event_loop, WindowType::Ui, ui_1, None)
+            .expect("Should be able to create ui window");
+        self.create_window_with_attributes(event_loop, WindowType::Ui, ui_2, None)
+            .expect("Should be able to create ui window");
     }
 
     fn window_event(
@@ -144,6 +262,7 @@ impl ApplicationHandler for Application {
             } => todo!(),
             WindowEvent::Resized(new_size) => window.resize(new_size),
             WindowEvent::CloseRequested => {
+                println!("Removed window: {window_id:?}");
                 self.windows.remove(&window_id);
             }
             // WindowEvent::Focused(_) => todo!(),
@@ -165,24 +284,24 @@ impl ApplicationHandler for Application {
             WindowEvent::ModifiersChanged(mods) => {
                 window.modifiers = mods.state();
             }
-            // WindowEvent::Focused(f) => {
-            //     if f {
-            //         window.clear_color = wgpu::Color {
-            //             r: 0.0,
-            //             g: 1.0,
-            //             b: 0.0,
-            //             a: 0.1,
-            //         }
-            //     } else {
-            //         window.clear_color = wgpu::Color {
-            //             r: 1.0,
-            //             g: 0.0,
-            //             b: 0.0,
-            //             a: 0.1,
-            //         }
-            //     }
-            //     window.window.request_redraw();
-            // }
+            WindowEvent::Focused(f) => {
+                if f {
+                    window.clear_color = wgpu::Color {
+                        r: 0.0,
+                        g: 1.0,
+                        b: 0.0,
+                        a: 0.1,
+                    }
+                } else {
+                    window.clear_color = wgpu::Color {
+                        r: 1.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.1,
+                    }
+                }
+                window.window.request_redraw();
+            }
             // WindowEvent::Ime(_) => todo!(),
             // WindowEvent::CursorMoved { device_id, position } => todo!(),
             // WindowEvent::CursorEntered { device_id } => todo!(),
@@ -217,6 +336,7 @@ impl ApplicationHandler for Application {
         let _ = (event_loop, device_id, event);
     }
 
+    /// This function is called when there are no more events
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         if self.windows.is_empty() {
             event_loop.exit();
@@ -239,13 +359,17 @@ impl ApplicationHandler for Application {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Action {
     Ping,
-    CreateNewWindow,
+    CreateNewMainWindow,
+    CreateNewUiWindow,
     CloseWindow,
     ToggleDecorations,
     ToggleFullscreen,
 }
 
 pub struct WindowState {
+    // The type of the window, either Ui or Main
+    window_type: WindowType,
+
     // NOTE: The surface is dropped before the window
     //
     /// The window surface
@@ -266,6 +390,7 @@ pub struct WindowState {
 impl WindowState {
     pub async fn new(
         window: Box<dyn Window>,
+        window_type: WindowType,
         instance: &wgpu::Instance,
     ) -> Result<Self, Box<dyn Error>> {
         let PhysicalSize { width, height } = window.inner_size();
@@ -319,10 +444,12 @@ impl WindowState {
             r: 0.0,
             g: 0.3,
             b: 1.0,
-            a: 1.0,
+            a: 0.6,
         };
 
         Ok(Self {
+            window_type,
+
             surface,
             config,
             _adapter,
@@ -395,6 +522,12 @@ impl WindowState {
     }
 }
 
+#[derive(Debug)]
+pub enum WindowType {
+    Main,
+    Ui,
+}
+
 pub struct Binding<T: Eq> {
     trigger: T,
     modifiers: ModifiersState,
@@ -418,7 +551,8 @@ impl<T: Eq> Binding<T> {
 
 #[rustfmt::skip]
 const KEYBINDS: &[Binding<KeyCode>] = &[
-    Binding::new(KeyCode::KeyN, ModifiersState::CONTROL, Action::CreateNewWindow),
+    Binding::new(KeyCode::KeyN, ModifiersState::CONTROL, Action::CreateNewMainWindow),
+    Binding::new(KeyCode::KeyU, ModifiersState::CONTROL, Action::CreateNewUiWindow),
     Binding::new(KeyCode::KeyD, ModifiersState::CONTROL, Action::ToggleDecorations),
     Binding::new(KeyCode::KeyF, ModifiersState::CONTROL, Action::ToggleFullscreen),
     Binding::new(KeyCode::KeyQ, ModifiersState::CONTROL, Action::CloseWindow),
