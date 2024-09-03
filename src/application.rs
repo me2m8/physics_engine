@@ -148,19 +148,6 @@ impl Application {
                     println!("Failed to Create Window: {err:?}");
                 }
             }
-            Action::CreateNewUiWindow => {
-                if let Err(err) = self.create_window(
-                    event_loop,
-                    WindowType::Ui,
-                    PhysicalSize {
-                        width: 100,
-                        height: 50,
-                    },
-                    None,
-                ) {
-                    println!("Failed to Create Window: {err:?}");
-                }
-            }
             Action::CloseWindow => {
                 self.windows.remove(&window_id);
 
@@ -228,10 +215,11 @@ impl ApplicationHandler for Application {
                 serial: _,
                 token: _,
             } => todo!(),
-            WindowEvent::Moved(position) => {}
-            WindowEvent::CursorMoved { position, .. } => {}
-            WindowEvent::CursorLeft { .. } => {}
-            WindowEvent::CursorEntered { .. } => {}
+            WindowEvent::Moved(position) => {},
+            WindowEvent::CursorMoved { position, .. } => {},
+            WindowEvent::CursorLeft { .. } => {},
+            WindowEvent::CursorEntered { .. } => {},
+            WindowEvent::MouseInput { state, button, .. } => {},
             WindowEvent::Resized(new_size) => window.resize(new_size),
             WindowEvent::CloseRequested => {
                 println!("Removed window: {window_id:?}");
@@ -331,9 +319,7 @@ impl ApplicationHandler for Application {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Ping,
-    CreateUiWindow(WindowId, WindowAttributes, String),
     CreateNewMainWindow,
-    CreateNewUiWindow,
     CloseWindow,
     ToggleDecorations,
     ToggleFullscreen,
@@ -499,6 +485,22 @@ impl WindowState {
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn config(&self) -> &wgpu::SurfaceConfiguration {
+        &self.config
+    }
+
+    pub fn surface(&self) -> &wgpu::Surface<'static> {
+        &self.surface
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
 }
 
 #[derive(Debug)]
@@ -531,7 +533,6 @@ impl<T: Eq> Binding<T> {
 #[rustfmt::skip]
 const KEYBINDS: &[Binding<KeyCode>] = &[
     Binding::new(KeyCode::KeyN, ModifiersState::CONTROL, Action::CreateNewMainWindow),
-    Binding::new(KeyCode::KeyU, ModifiersState::CONTROL, Action::CreateNewUiWindow),
     Binding::new(KeyCode::KeyD, ModifiersState::CONTROL, Action::ToggleDecorations),
     Binding::new(KeyCode::KeyF, ModifiersState::CONTROL, Action::ToggleFullscreen),
     Binding::new(KeyCode::KeyQ, ModifiersState::CONTROL, Action::CloseWindow),
