@@ -1,3 +1,4 @@
+use cgmath::{vec2, vec4};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
@@ -13,6 +14,8 @@ use winit::platform::startup_notify::{
     self, EventLoopExtStartupNotify, WindowAttributesExtStartupNotify,
 };
 use winit::window::{Window, WindowAttributes, WindowId};
+
+use crate::render_context::RenderContext;
 
 pub struct Application {
     reciever: Receiver<Action>,
@@ -215,11 +218,11 @@ impl ApplicationHandler for Application {
                 serial: _,
                 token: _,
             } => todo!(),
-            WindowEvent::Moved(position) => {},
-            WindowEvent::CursorMoved { position, .. } => {},
-            WindowEvent::CursorLeft { .. } => {},
-            WindowEvent::CursorEntered { .. } => {},
-            WindowEvent::MouseInput { state, button, .. } => {},
+            WindowEvent::Moved(position) => {}
+            WindowEvent::CursorMoved { position, .. } => {}
+            WindowEvent::CursorLeft { .. } => {}
+            WindowEvent::CursorEntered { .. } => {}
+            WindowEvent::MouseInput { state, button, .. } => {}
             WindowEvent::Resized(new_size) => window.resize(new_size),
             WindowEvent::CloseRequested => {
                 println!("Removed window: {window_id:?}");
@@ -269,7 +272,8 @@ impl ApplicationHandler for Application {
             // WindowEvent::MouseWheel { device_id, delta, phase } => todo!(),
             // WindowEvent::MouseInput { device_id, state, button } => todo!(),
             WindowEvent::RedrawRequested => {
-                window.draw();
+                window.renderer.draw_rectangle(vec2(0., 0.), vec2(500., 500.), vec4(1.0, 1.0, 1.0, 1.0));
+                window.renderer.draw(&window.surface, &window.config);
             }
             _ => {}
         }
@@ -335,8 +339,9 @@ pub struct WindowState {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     _adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+
+    /// Context for rendering to the window
+    renderer: RenderContext,
 
     // Miscelaneous window information
     position: PhysicalPosition<i32>,
@@ -410,14 +415,16 @@ impl WindowState {
             a: 1.0,
         };
 
+        let renderer = RenderContext::new(device, queue, &config);
+
         Ok(Self {
             window_type,
 
             surface,
             config,
             _adapter,
-            device,
-            queue,
+
+            renderer,
 
             position: Default::default(),
             mouse_position: Default::default(),
@@ -439,7 +446,8 @@ impl WindowState {
         self.config.width = width;
         self.config.height = height;
 
-        self.surface.configure(&self.device, &self.config);
+        self.surface
+            .configure(self.renderer.device(), &self.config);
         self.window.request_redraw();
     }
 
@@ -453,53 +461,12 @@ impl WindowState {
         self.window.set_maximized(!maximized);
     }
 
-    fn draw(&mut self) {
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Command Encoder"),
-            });
-
-        let output = self.surface.get_current_texture().unwrap();
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        store: wgpu::StoreOp::Store,
-                        load: wgpu::LoadOp::Clear(self.clear_color),
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-    }
-
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
-    }
-
     pub fn config(&self) -> &wgpu::SurfaceConfiguration {
         &self.config
     }
 
     pub fn surface(&self) -> &wgpu::Surface<'static> {
         &self.surface
-    }
-
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
     }
 }
 
