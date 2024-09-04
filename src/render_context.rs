@@ -1,35 +1,35 @@
 use core::num;
 use std::{collections::HashMap, default};
 
-use cgmath::{Vector2, Vector4};
+use cgmath::{Vector2, Vector3, Vector4};
 use wgpu::{
-    include_wgsl, util::DeviceExt, vertex_attr_array, BufferAddress, BufferUsages, ColorWrites,
-    Device, FragmentState, FrontFace, IndexFormat, PipelineCompilationOptions, PrimitiveState,
-    PrimitiveTopology, Queue, RenderBundle, ShaderModule, Surface, SurfaceConfiguration,
-    VertexAttribute, VertexBufferLayout,
+    include_wgsl, vertex_attr_array, BufferAddress, ColorWrites, Device, FragmentState, FrontFace,
+    PipelineCompilationOptions, PrimitiveState, PrimitiveTopology, Queue, ShaderModule, Surface,
+    SurfaceConfiguration, VertexAttribute, VertexBufferLayout,
 };
 
 pub struct RenderContext {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-
     shaders: HashMap<String, ShaderModule>,
     pipelines: HashMap<PipelineType, wgpu::RenderPipeline>,
-    rectangles: Rectangles,
+    rectangles: Vec<Instance>,
 }
 
-#[derive(Default, Clone, Debug)]
-pub struct Rectangles {
-    vertices: Vec<FilledPolygonVertex>,
-    indicies: Vec<u16>,
+pub struct RawInstance {
+    transform: cgmath::Matrix4<f32>,
+    color: Vector4<f32>,
 }
 
 pub struct Instance {
-    transform: cgmath::Matrix4<f32>,
+    position: Vector3<f32>,
+    pitch: f32,
+    yaw: f32,
+    roll: f32,
+    x_scale: f32,
+    y_scale: f32,
 }
 
 impl RenderContext {
-    pub fn new(device: Device, queue: Queue, config: &SurfaceConfiguration) -> Self {
+    pub fn new(device: &Device, config: &SurfaceConfiguration) -> Self {
         let mut pipelines = HashMap::new();
 
         use super::include_many_wgsl;
@@ -53,184 +53,51 @@ impl RenderContext {
             push_constant_ranges: &[],
         });
 
-        pipelines.insert(
-            PipelineType::PolygonFill,
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("FilledPolygon pipeline"),
-                primitive: PrimitiveState {
-                    topology: PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Front),
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                multiview: None,
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                layout: Some(&general_layout),
-                depth_stencil: None,
-                cache: None,
-                vertex: wgpu::VertexState {
-                    module: shaders.get("shaders/polygon_fill.wgsl").unwrap(),
-                    entry_point: "vs_main",
-                    compilation_options: PipelineCompilationOptions::default(),
-                    buffers: &[FilledPolygonVertex::DESC],
-                },
-                fragment: Some(FragmentState {
-                    module: shaders.get("shaders/polygon_fill.wgsl").unwrap(),
-                    entry_point: "fs_main",
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: config.format,
-                        blend: None,
-                        write_mask: ColorWrites::ALL,
-                    })],
-                }),
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("FilledPolygon pipeline"),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Front),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            multiview: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            layout: Some(&general_layout),
+            depth_stencil: None,
+            cache: None,
+            vertex: wgpu::VertexState {
+                module: shaders.get("shaders/polygon_fill.wgsl").unwrap(),
+                entry_point: "vs_main",
+                compilation_options: PipelineCompilationOptions::default(),
+                buffers: &[FilledPolygonVertex::DESC],
+            },
+            fragment: Some(FragmentState {
+                module: shaders.get("shaders/polygon_fill.wgsl").unwrap(),
+                entry_point: "fs_main",
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
             }),
-        );
+        });
+
+        pipelines.insert(PipelineType::PolygonFill, pipeline);
 
         Self {
-            device,
-            queue,
-
             shaders,
             pipelines,
-            rectangles: Rectangles::default(),
+            rectangles: Default::default(),
         }
-    }
-
-    pub fn draw_rectangle(
-        &mut self,
-        top_left: Vector2<f32>,
-        bottom_right: Vector2<f32>,
-        color: Vector4<f32>,
-    ) {
-        let tl = [top_left.x, top_left.y, 0.0];
-        let tr = [bottom_right.x, top_left.y, 0.0];
-        let bl = [top_left.x, bottom_right.y, 0.0];
-        let br = [bottom_right.x, bottom_right.y, 0.0];
-
-        let mut vertices = vec![
-            FilledPolygonVertex::new(tr, color),
-            FilledPolygonVertex::new(tl, color),
-            FilledPolygonVertex::new(bl, color),
-            FilledPolygonVertex::new(br, color),
-        ];
-
-        let offset = self.rectangles.vertices.len() as u16;
-        let mut indicies = vec![
-            offset,
-            offset + 1,
-            offset + 2,
-            offset,
-            offset + 2,
-            offset + 3,
-        ];
-
-        self.rectangles.vertices.append(&mut vertices);
-        self.rectangles.indicies.append(&mut indicies);
-    }
-
-    fn build_draw_commands(&mut self, config: &SurfaceConfiguration) -> Vec<RenderBundle> {
-        let mut commands: Vec<RenderBundle> = vec![];
-
-        // Render Rectangles
-        if !self.rectangles.vertices.is_empty() {
-            let mut encoder =
-                self.device
-                    .create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-                        label: Some("Bundle Encoder"),
-                        color_formats: &[Some(config.format)],
-                        depth_stencil: None,
-                        sample_count: 1,
-                        multiview: None,
-                    });
-
-            let vertex_buffer = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Rectangle Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&self.rectangles.vertices),
-                    usage: BufferUsages::VERTEX,
-                });
-
-            let index_buffer = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Rectangle Index Buffer"),
-                    contents: bytemuck::cast_slice(&self.rectangles.indicies),
-                    usage: BufferUsages::INDEX,
-                });
-
-            let num_indicies = self.rectangles.indicies.len() as u32;
-
-            dbg!(&self.rectangles.vertices);
-            dbg!(&self.rectangles.indicies);
-
-            encoder.set_pipeline(self.pipelines.get(&PipelineType::PolygonFill).unwrap());
-            encoder.set_vertex_buffer(0, vertex_buffer.slice(..));
-            encoder.set_index_buffer(index_buffer.slice(..), IndexFormat::Uint16);
-
-            encoder.draw_indexed(0..num_indicies, 0, 0..1);
-
-            commands.push(encoder.finish(&wgpu::RenderBundleDescriptor {
-                label: Some("Rectangles Render Bundle"),
-            }));
-
-            self.rectangles.vertices.clear();
-            self.rectangles.indicies.clear();
-        }
-
-        commands
-    }
-
-    pub fn draw(&mut self, surface: &Surface, config: &SurfaceConfiguration) {
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Command Encoder"),
-            });
-
-        let output = surface.get_current_texture().unwrap();
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        {
-            let mut _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        store: wgpu::StoreOp::Store,
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            let commands = self.build_draw_commands(config);
-            _render_pass.execute_bundles(commands.iter());
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-    }
-
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
-    }
-
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
     }
 }
 
