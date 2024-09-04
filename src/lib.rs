@@ -2,6 +2,7 @@
 pub mod application;
 pub mod render_context;
 pub mod camera;
+pub mod simulation;
 
 pub const WINDOW_WIDTH: f32 = 1920.;
 pub const WINDOW_HEIGHT: f32 = 1080.;

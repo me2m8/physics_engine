@@ -1,4 +1,3 @@
-
 struct VertexInput {
     @location(0) position: vec4<f32>, 
     @location(1) color: vec4<f32>,
@@ -8,6 +7,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) frag_coord: vec2<f32>,
 }
 
 @vertex
@@ -18,6 +18,7 @@ fn vs_main(
 
     out.clip_position = in.position;
     out.color = in.color;
+    out.frag_coord = in.frag_coord;
 
     return out;
 }
@@ -26,5 +27,13 @@ fn vs_main(
 fn fs_main(
     in: VertexOutput
 ) -> @location(0) vec4<f32> {
-    return in.color;
+    let dist = length(in.frag_coord);
+    let base_alpha = 0.2;
+
+    return vec4<f32>(in.color.xyz, cubed(1.0 - dist) * base_alpha);
+}
+
+/// Cubes the given number
+fn cubed(n: f32) -> f32 {
+    return n * n * n;
 }

@@ -1,8 +1,10 @@
 use itertools::Itertools;
+use wgpu::util::RenderEncoder;
 use std::collections::HashMap;
 use std::error::Error;
+use std::num::NonZero;
 use std::sync::mpsc::{Receiver, Sender};
-use wgpu::{Device, Queue, Surface};
+use wgpu::{Device, IndexFormat, Queue, Surface};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, WindowEvent};
@@ -14,7 +16,8 @@ use winit::platform::startup_notify::{
 };
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::render_context::RenderContext;
+use crate::render_context::{PipelineType, RenderContext, Vertex};
+use crate::simulation::Particle;
 
 pub struct Application {
     reciever: Receiver<Action>,
@@ -53,23 +56,15 @@ impl Application {
     pub fn create_window(
         &mut self,
         event_loop: &dyn ActiveEventLoop,
-        window_type: WindowType,
         window_size: PhysicalSize<u32>,
         _tab_id: Option<String>,
     ) -> Result<WindowId, Box<dyn Error>> {
         #[allow(unused_mut)]
-        let mut window_attributes = match window_type {
-            WindowType::Main => WindowAttributes::default()
-                .with_inner_size(window_size)
-                .with_transparent(true)
-                .with_active(true)
-                .with_title("Winit Window"),
-            WindowType::Ui => WindowAttributes::default()
-                .with_inner_size(window_size)
-                .with_transparent(true)
-                .with_active(false)
-                .with_decorations(false),
-        };
+        let mut window_attributes = WindowAttributes::default()
+            .with_inner_size(window_size)
+            .with_transparent(true)
+            .with_active(true)
+            .with_title("Winit Window");
 
         #[cfg(not(target_os = "macos"))]
         if let Some(token) = event_loop.read_token_from_env() {
@@ -83,8 +78,7 @@ impl Application {
         // get window id
         let window_id = window.id();
         // Create window state
-        let window_state =
-            pollster::block_on(WindowState::new(window, window_type, &self.wgpu_instance))?;
+        let window_state = pollster::block_on(WindowState::new(window, &self.wgpu_instance))?;
 
         println!("Created Window: {window_id:?}");
 
@@ -98,7 +92,6 @@ impl Application {
     pub fn create_window_with_attributes(
         &mut self,
         event_loop: &dyn ActiveEventLoop,
-        window_type: WindowType,
         mut window_attributes: WindowAttributes,
         _tab_id: Option<String>,
     ) -> Result<WindowId, Box<dyn Error>> {
@@ -113,8 +106,7 @@ impl Application {
         // get window id
         let window_id = window.id();
         // Create window state
-        let window_state =
-            pollster::block_on(WindowState::new(window, window_type, &self.wgpu_instance))?;
+        let window_state = pollster::block_on(WindowState::new(window, &self.wgpu_instance))?;
 
         println!("Created Window: {window_id:?}");
 
@@ -144,9 +136,7 @@ impl Application {
         #[allow(clippy::single_match)]
         match _action {
             Action::CreateNewMainWindow => {
-                if let Err(err) =
-                    self.create_window(event_loop, WindowType::Main, self.monitor_size, None)
-                {
+                if let Err(err) = self.create_window(event_loop, self.monitor_size, None) {
                     println!("Failed to Create Window: {err:?}");
                 }
             }
@@ -198,7 +188,7 @@ impl ApplicationHandler for Application {
 
         println!("Monitor Size: {width} x {height}");
 
-        self.create_window(event_loop, WindowType::Main, size, None)
+        self.create_window(event_loop, size, None)
             .expect("Failed to create window");
     }
 
@@ -328,9 +318,6 @@ pub enum Action {
 }
 
 pub struct WindowState {
-    // The type of the window, either Ui or Main
-    window_type: WindowType,
-
     // NOTE: The surface is dropped before the window
     //
     /// The window surface
@@ -356,7 +343,6 @@ pub struct WindowState {
 impl WindowState {
     pub async fn new(
         window: Box<dyn Window>,
-        window_type: WindowType,
         instance: &wgpu::Instance,
     ) -> Result<Self, Box<dyn Error>> {
         let PhysicalSize { width, height } = window.inner_size();
@@ -395,6 +381,9 @@ impl WindowState {
             .find(|s| s.is_srgb())
             .unwrap_or(&wgpu::TextureFormat::Bgra8UnormSrgb);
 
+        dbg!(&surface_caps.alpha_modes);
+        dbg!(&surface_caps.present_modes);
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -418,8 +407,6 @@ impl WindowState {
         let renderer = RenderContext::new(&device, &config);
 
         Ok(Self {
-            window_type,
-
             surface,
             config,
             _adapter,
@@ -448,8 +435,7 @@ impl WindowState {
         self.config.width = width;
         self.config.height = height;
 
-        self.surface
-            .configure(self.device(), self.config());
+        self.surface.configure(self.device(), self.config());
         self.window.request_redraw();
     }
 
@@ -475,6 +461,66 @@ impl WindowState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        #[rustfmt::skip]
+        const VERTICES: [Vertex; 4] = [
+            Vertex { position: [-0.5, -0.5, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [-1.0, -1.0] },
+            Vertex { position: [ 0.5, -0.5, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [ 1.0, -1.0] },
+            Vertex { position: [ 0.5,  0.5, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [ 1.0,  1.0] },
+            Vertex { position: [-0.5,  0.5, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [-1.0,  1.0] },
+        ];
+
+        #[rustfmt::skip]
+        const INDICIES: [u16; 12] = [
+            0, 1, 2,
+            2, 3, 0,
+            4, 5, 6,
+            6, 7, 4,
+        ];
+
+        let particle1 = Particle {
+            position: [-0.5, 0.0, 0.0].into(),
+            radius: 1.0,
+        };
+        let particle2 = Particle {
+            position: [0.5, 0.0, 0.0].into(),
+            radius: 1.0,
+        };
+
+        let vertices = [particle1.to_vertices(), particle2.to_vertices()].concat();
+        println!("Vertices: {vertices:?}");
+
+        // Buffer Writes
+        {
+            let mut vertex_buffer = self
+                .queue
+                .write_buffer_with(
+                    self.renderer.vertex_buffer(),
+                    0,
+                    NonZero::new((size_of::<Vertex>() * vertices.len()) as u64).unwrap(),
+                )
+                .unwrap();
+
+            vertex_buffer
+                .as_mut()
+                .copy_from_slice(bytemuck::cast_slice(&vertices));
+
+            let mut index_buffer = self
+                .queue
+                .write_buffer_with(
+                    self.renderer.index_buffer(),
+                    0,
+                    NonZero::new((size_of::<u16>() * INDICIES.len()) as u64).unwrap(),
+                )
+                .unwrap();
+
+            index_buffer
+                .as_mut()
+                .copy_from_slice(bytemuck::cast_slice(&INDICIES));
+        }
+
+        self.queue().submit([]);
+
+        // Render pass
         {
             let mut _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -490,6 +536,13 @@ impl WindowState {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            _render_pass.set_pipeline(self.renderer.pipeline(PipelineType::CircleFade));
+
+            _render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer().slice(..));
+            _render_pass.set_index_buffer(self.renderer.index_buffer().slice(..), IndexFormat::Uint16);
+
+            _render_pass.draw_indexed(0..INDICIES.len() as u32, 0, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -513,16 +566,9 @@ impl WindowState {
     }
 }
 
-#[derive(Debug)]
-pub enum WindowType {
-    Main,
-    Ui,
-}
-
 pub struct Binding<T: Eq> {
     trigger: T,
     modifiers: ModifiersState,
-
     action: Action,
 }
 
