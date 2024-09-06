@@ -1,7 +1,5 @@
 
 use std::sync::mpsc;
-
-use cgmath::Vector2;
 use physics_engine::application::Application;
 
 #[tokio::main]

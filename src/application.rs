@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use wgpu::util::RenderEncoder;
+use core::panic;
 use std::collections::HashMap;
 use std::error::Error;
 use std::num::NonZero;
@@ -16,6 +16,7 @@ use winit::platform::startup_notify::{
 };
 use winit::window::{Window, WindowAttributes, WindowId};
 
+use crate::camera::{self, Camera, Camera2D};
 use crate::render_context::{PipelineType, RenderContext, Vertex};
 use crate::simulation::Particle;
 
@@ -328,7 +329,7 @@ pub struct WindowState {
     queue: Queue,
 
     /// Context for rendering to the window
-    renderer: RenderContext,
+    renderer: RenderContext<Camera2D>,
 
     // Miscelaneous window information
     position: PhysicalPosition<i32>,
@@ -339,6 +340,9 @@ pub struct WindowState {
     /// The actual window
     window: Box<dyn Window>,
 }
+
+type CameraType = Camera2D;
+type RawCameraType = <CameraType as camera::Camera>::Raw;
 
 impl WindowState {
     pub async fn new(
@@ -404,7 +408,7 @@ impl WindowState {
             a: 1.0,
         };
 
-        let renderer = RenderContext::new(&device, &config);
+        let renderer = RenderContext::<CameraType>::new(&device, &config);
 
         Ok(Self {
             surface,
@@ -463,10 +467,10 @@ impl WindowState {
 
         #[rustfmt::skip]
         const VERTICES: [Vertex; 4] = [
-            Vertex { position: [-0.5, -0.5, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [-1.0, -1.0] },
-            Vertex { position: [ 0.5, -0.5, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [ 1.0, -1.0] },
-            Vertex { position: [ 0.5,  0.5, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [ 1.0,  1.0] },
-            Vertex { position: [-0.5,  0.5, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [-1.0,  1.0] },
+            Vertex { position: [-100.0, -100.0, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [-1.0, -1.0] },
+            Vertex { position: [ 100.0, -100.0, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [ 1.0, -1.0] },
+            Vertex { position: [ 100.0,  100.0, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [ 1.0,  1.0] },
+            Vertex { position: [-100.0,  100.0, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [-1.0,  1.0] },
         ];
 
         #[rustfmt::skip]
@@ -478,15 +482,11 @@ impl WindowState {
         ];
 
         let particle1 = Particle {
-            position: [-0.5, 0.0, 0.0].into(),
-            radius: 1.0,
-        };
-        let particle2 = Particle {
-            position: [0.5, 0.0, 0.0].into(),
-            radius: 1.0,
+            position: [0.0, 0.0, 0.0].into(),
+            radius: 500.0,
         };
 
-        let vertices = [particle1.to_vertices(), particle2.to_vertices()].concat();
+        let vertices = particle1.to_vertices();
         println!("Vertices: {vertices:?}");
 
         // Buffer Writes
@@ -516,6 +516,19 @@ impl WindowState {
             index_buffer
                 .as_mut()
                 .copy_from_slice(bytemuck::cast_slice(&INDICIES));
+
+            let mut camera_buffer = self
+                .queue
+                .write_buffer_with(
+                    self.renderer.camera().uniform_buffer(),
+                    0,
+                    NonZero::new(size_of::<RawCameraType>() as u64).unwrap(),
+                )
+                .unwrap();
+
+            camera_buffer
+                .as_mut()
+                .copy_from_slice(bytemuck::cast_slice(&[self.renderer.camera().to_raw()]));
         }
 
         self.queue().submit([]);
@@ -529,7 +542,12 @@ impl WindowState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         store: wgpu::StoreOp::Store,
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.1,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
                     },
                 })],
                 depth_stencil_attachment: None,
@@ -538,9 +556,11 @@ impl WindowState {
             });
 
             _render_pass.set_pipeline(self.renderer.pipeline(PipelineType::CircleFade));
+            _render_pass.set_bind_group(0, self.renderer.camera().bind_group(), &[]);
 
             _render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer().slice(..));
-            _render_pass.set_index_buffer(self.renderer.index_buffer().slice(..), IndexFormat::Uint16);
+            _render_pass
+                .set_index_buffer(self.renderer.index_buffer().slice(..), IndexFormat::Uint16);
 
             _render_pass.draw_indexed(0..INDICIES.len() as u32, 0, 0..1);
         }

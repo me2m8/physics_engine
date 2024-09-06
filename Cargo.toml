@@ -12,7 +12,6 @@ itertools = "0.13.0"
 log = "0.4.22"
 pollster = "0.3.0"
 rand = "0.8.5"
-softbuffer = "0.4.5"
 tokio = { version = "1.39.3", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["time"] }

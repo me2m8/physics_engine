@@ -2,22 +2,35 @@
 use core::num;
 use std::collections::HashMap;
 
-use cgmath::{Vector3, Vector4};
+use cgmath::{vec2, Vector3, Vector4};
 use wgpu::{
     include_wgsl, vertex_attr_array, BlendComponent, BlendState, Buffer, BufferAddress, BufferUsages, ColorWrites, Device, FragmentState, FrontFace, PipelineCompilationOptions, PrimitiveState, PrimitiveTopology, RenderPipeline, ShaderModule, SurfaceConfiguration, VertexAttribute, VertexBufferLayout
 };
 
-pub struct RenderContext {
+use crate::{camera::{Camera, CameraState}, MAX_VERTICES};
+
+pub struct RenderContext<C>
+where
+    C: Camera + Sized
+{
     shaders: HashMap<String, ShaderModule>,
     pipelines: HashMap<PipelineType, wgpu::RenderPipeline>,
+
+    camera: CameraState<C>,
 
     vertex_buffer: Buffer,
     index_buffer: Buffer,
 }
 
-impl RenderContext {
+impl<C> RenderContext<C>
+where
+    C: Camera + Sized
+{
     pub fn new(device: &Device, config: &SurfaceConfiguration) -> Self {
         let mut pipelines = HashMap::new();
+
+        let viewport = vec2(config.width as f32, config.height as f32);
+        let camera = CameraState::new(device, viewport);
 
         use super::include_many_wgsl;
 
@@ -37,7 +50,7 @@ impl RenderContext {
 
         let general_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("render pipeline_layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[camera.bind_group_layout()],
             push_constant_ranges: &[],
         });
 
@@ -127,7 +140,7 @@ impl RenderContext {
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
-            size: (size_of::<Vertex>() * 1024) as u64,
+            size: (size_of::<Vertex>() * crate::MAX_VERTICES) as u64,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -142,6 +155,8 @@ impl RenderContext {
         Self {
             vertex_buffer,
             index_buffer,
+
+            camera,
 
             shaders,
             pipelines,
@@ -158,6 +173,10 @@ impl RenderContext {
 
     pub fn pipeline(&self, pipeline_type: PipelineType) -> &RenderPipeline {
         self.pipelines.get(&pipeline_type).unwrap()
+    }
+
+    pub fn camera(&self) -> &CameraState<C> {
+        &self.camera
     }
 }
 
