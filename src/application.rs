@@ -17,7 +17,7 @@ use winit::platform::startup_notify::{
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::camera::{self, Camera, Camera2D};
-use crate::render_context::{PipelineType, RenderContext, Vertex};
+use crate::render_context::{quad_indicies_from_verticies, PipelineType, RenderContext, Vertex};
 use crate::simulation::{Particle, SimulationContext};
 
 pub struct Application {
@@ -487,13 +487,10 @@ impl WindowState {
             6, 7, 4,
         ];
 
-        let particle1 = Particle {
-            position: [0.0, 0.0].into(),
-            radius: 500.0,
-        };
-
-        let vertices = particle1.to_vertices();
+        let vertices = self.simulation.particles_to_circle_vertices();
         println!("Vertices: {vertices:?}");
+
+        let indicies = quad_indicies_from_verticies(&vertices).unwrap();
 
         // Buffer Writes
         {
@@ -515,13 +512,13 @@ impl WindowState {
                 .write_buffer_with(
                     self.renderer.index_buffer(),
                     0,
-                    NonZero::new((size_of::<u16>() * INDICIES.len()) as u64).unwrap(),
+                    NonZero::new((size_of::<u16>() * indicies.len()) as u64).unwrap(),
                 )
                 .unwrap();
 
             index_buffer
                 .as_mut()
-                .copy_from_slice(bytemuck::cast_slice(&INDICIES));
+                .copy_from_slice(bytemuck::cast_slice(&indicies));
 
             let mut camera_buffer = self
                 .queue
@@ -568,7 +565,7 @@ impl WindowState {
             _render_pass
                 .set_index_buffer(self.renderer.index_buffer().slice(..), IndexFormat::Uint16);
 
-            _render_pass.draw_indexed(0..INDICIES.len() as u32, 0, 0..1);
+            _render_pass.draw_indexed(0..indicies.len() as u32, 0, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

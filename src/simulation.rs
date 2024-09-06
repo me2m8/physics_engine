@@ -66,4 +66,18 @@ impl SimulationContext {
 
         Self { particles }
     }
+
+    pub fn particles_to_circle_vertices(&self) -> Vec<Vertex> {
+        self.particles
+            .iter()
+            .map(|p| p.to_vertices())
+            .collect_vec()
+            .concat()
+    }
+}
+
+impl Default for SimulationContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }

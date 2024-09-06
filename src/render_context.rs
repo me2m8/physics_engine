@@ -1,17 +1,23 @@
 #![allow(unused)]
 use core::num;
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error};
 
 use cgmath::{vec2, Vector3, Vector4};
 use wgpu::{
-    include_wgsl, vertex_attr_array, BlendComponent, BlendState, Buffer, BufferAddress, BufferUsages, ColorWrites, Device, FragmentState, FrontFace, PipelineCompilationOptions, PrimitiveState, PrimitiveTopology, RenderPipeline, ShaderModule, SurfaceConfiguration, VertexAttribute, VertexBufferLayout
+    include_wgsl, vertex_attr_array, BlendComponent, BlendState, Buffer, BufferAddress,
+    BufferUsages, ColorWrites, Device, FragmentState, FrontFace, PipelineCompilationOptions,
+    PrimitiveState, PrimitiveTopology, RenderPipeline, ShaderModule, SurfaceConfiguration,
+    VertexAttribute, VertexBufferLayout,
 };
 
-use crate::{camera::{Camera, CameraState}, MAX_VERTICES};
+use crate::{
+    camera::{Camera, CameraState},
+    MAX_VERTICES,
+};
 
 pub struct RenderContext<C>
 where
-    C: Camera + Sized
+    C: Camera + Sized,
 {
     shaders: HashMap<String, ShaderModule>,
     pipelines: HashMap<PipelineType, wgpu::RenderPipeline>,
@@ -24,7 +30,7 @@ where
 
 impl<C> RenderContext<C>
 where
-    C: Camera + Sized
+    C: Camera + Sized,
 {
     pub fn new(device: &Device, config: &SurfaceConfiguration) -> Self {
         let mut pipelines = HashMap::new();
@@ -301,4 +307,23 @@ pub enum PipelineType {
     PolygonFill,
     CircleFill,
     CircleFade,
+}
+
+pub fn quad_indicies_from_verticies(vertices: &[Vertex]) -> Result<Vec<u16>, Box<dyn Error>> {
+    let num_vertices = vertices.len();
+    if num_vertices % 4 != 0 {
+        return Err("Vertex amount not divisible by 4, so the vertices cannot form quads".into());
+    }
+
+    Ok((0..num_vertices as u16)
+        .step_by(4)
+        .fold(
+            Vec::with_capacity(size_of::<u16>() * num_vertices * 3 / 2),
+            |mut acc, i| {
+                acc.push([i, i + 1, i + 2, i + 2, i + 3, i]);
+
+                acc
+            },
+        )
+        .concat())
 }
