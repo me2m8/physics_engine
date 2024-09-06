@@ -44,7 +44,8 @@ where
         let shader_descriptors = include_many_wgsl![
             "shaders/polygon_fill.wgsl",
             "shaders/circle_fill.wgsl",
-            "shaders/circle_fade.wgsl"
+            "shaders/circle_fade.wgsl",
+            "shaders/zero_width_lines.wgsl"
         ];
 
         let shaders = shader_descriptors
@@ -127,13 +128,13 @@ where
                 depth_stencil: None,
                 cache: None,
                 vertex: wgpu::VertexState {
-                    module: shaders.get("shaders/circle_fade.wgsl").unwrap(),
+                    module: shaders.get("shaders/circle_fill.wgsl").unwrap(),
                     entry_point: "vs_main",
                     compilation_options: PipelineCompilationOptions::default(),
                     buffers: &[Vertex::DESC],
                 },
                 fragment: Some(FragmentState {
-                    module: shaders.get("shaders/circle_fade.wgsl").unwrap(),
+                    module: shaders.get("shaders/circle_fill.wgsl").unwrap(),
                     entry_point: "fs_main",
                     compilation_options: PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
@@ -176,6 +177,48 @@ where
                 },
                 fragment: Some(FragmentState {
                     module: shaders.get("shaders/circle_fade.wgsl").unwrap(),
+                    entry_point: "fs_main",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: ColorWrites::ALL,
+                    })],
+                }),
+            }),
+        );
+
+        // ZeroWidthLines pipeline
+        pipelines.insert(
+            PipelineType::ZeroWidthLines,
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("zero width line pipeline"),
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::LineList,
+                    strip_index_format: None,
+                    front_face: FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Line,
+                    conservative: false,
+                },
+                multiview: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                layout: Some(&general_layout),
+                depth_stencil: None,
+                cache: None,
+                vertex: wgpu::VertexState {
+                    module: shaders.get("shaders/zero_width_lines.wgsl").unwrap(),
+                    entry_point: "vs_main",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    buffers: &[Vertex::DESC],
+                },
+                fragment: Some(FragmentState {
+                    module: shaders.get("shaders/zero_width_lines.wgsl").unwrap(),
                     entry_point: "fs_main",
                     compilation_options: PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
@@ -307,6 +350,7 @@ pub enum PipelineType {
     PolygonFill,
     CircleFill,
     CircleFade,
+    ZeroWidthLines,
 }
 
 pub fn quad_indicies_from_verticies(vertices: &[Vertex]) -> Result<Vec<u16>, Box<dyn Error>> {

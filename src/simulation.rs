@@ -12,6 +12,8 @@ pub struct Particle {
 
 impl Particle {
     pub fn to_vertices(&self) -> [Vertex; 4] {
+        use crate::PARTICLE_COLOR;
+
         let rad_root_2 = SQRT_2 * self.radius;
 
         let center = vec4(self.position.x, self.position.y, 0.0, 1.0);
@@ -23,22 +25,22 @@ impl Particle {
         [
             Vertex {
                 position: (center + bl).into(),
-                color: [1.0, 0.5, 1.0, 1.0],
+                color: PARTICLE_COLOR,
                 frag_coord: [-1.0, -1.0],
             },
             Vertex {
                 position: (center + br).into(),
-                color: [1.0, 0.5, 1.0, 1.0],
+                color: PARTICLE_COLOR,
                 frag_coord: [1.0, -1.0],
             },
             Vertex {
                 position: (center + tr).into(),
-                color: [1.0, 0.5, 1.0, 1.0],
+                color: PARTICLE_COLOR,
                 frag_coord: [1.0, 1.0],
             },
             Vertex {
                 position: (center + tl).into(),
-                color: [1.0, 0.5, 1.0, 1.0],
+                color: PARTICLE_COLOR,
                 frag_coord: [-1.0, 1.0],
             },
         ]
@@ -49,8 +51,8 @@ pub struct SimulationContext {
     particles: Vec<Particle>,
 }
 
-const BOUNDARY_WIDTH: f32 = 800.0;
-const BOUNDARY_HEIGHT: f32 = 600.0;
+const BOUNDARY_WIDTH: f32 = 1900.0;
+const BOUNDARY_HEIGHT: f32 = 1060.0;
 
 impl SimulationContext {
     pub fn new() -> Self {
@@ -80,4 +82,20 @@ impl Default for SimulationContext {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub fn simulation_border() -> [Vertex; 4] {
+    use std::f32::consts::FRAC_1_SQRT_2;
+
+    let bl = vec4(-BOUNDARY_WIDTH * FRAC_1_SQRT_2, -BOUNDARY_HEIGHT * FRAC_1_SQRT_2, 0.0, 1.0);
+    let br = vec4( BOUNDARY_WIDTH * FRAC_1_SQRT_2, -BOUNDARY_HEIGHT * FRAC_1_SQRT_2, 0.0, 1.0);
+    let tr = vec4( BOUNDARY_WIDTH * FRAC_1_SQRT_2,  BOUNDARY_HEIGHT * FRAC_1_SQRT_2, 0.0, 1.0);
+    let tl = vec4(-BOUNDARY_WIDTH * FRAC_1_SQRT_2,  BOUNDARY_HEIGHT * FRAC_1_SQRT_2, 0.0, 1.0);
+
+    [
+        Vertex { position: bl.into(), color: [1.0, 1.0, 1.0, 1.0], frag_coord: [0.0, 0.0] },
+        Vertex { position: br.into(), color: [1.0, 1.0, 1.0, 1.0], frag_coord: [0.0, 0.0] },
+        Vertex { position: tr.into(), color: [1.0, 1.0, 1.0, 1.0], frag_coord: [0.0, 0.0] },
+        Vertex { position: tl.into(), color: [1.0, 1.0, 1.0, 1.0], frag_coord: [0.0, 0.0] },
+    ]
 }

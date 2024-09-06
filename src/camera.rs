@@ -119,7 +119,8 @@ impl Camera for Camera2D {
     fn to_raw(&self) -> RawCamera2D {
         RawCamera2D {
             position: [self.position.x, self.position.y, 0.0, 1.0],
-            viewport: self.viewport.into(),
+            // Divide by 4 to make the scaling work out
+            viewport: (self.viewport / 4.0).into(),
         }
     }
 

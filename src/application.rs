@@ -1,5 +1,5 @@
-use itertools::Itertools;
 use core::panic;
+use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
 use std::num::NonZero;
@@ -471,22 +471,6 @@ impl WindowState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        #[rustfmt::skip]
-        const VERTICES: [Vertex; 4] = [
-            Vertex { position: [-100.0, -100.0, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [-1.0, -1.0] },
-            Vertex { position: [ 100.0, -100.0, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [ 1.0, -1.0] },
-            Vertex { position: [ 100.0,  100.0, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [ 1.0,  1.0] },
-            Vertex { position: [-100.0,  100.0, 0.0, 1.0], color: [0.0, 1.0, 0.5, 1.0], frag_coord: [-1.0,  1.0] },
-        ];
-
-        #[rustfmt::skip]
-        const INDICIES: [u16; 12] = [
-            0, 1, 2,
-            2, 3, 0,
-            4, 5, 6,
-            6, 7, 4,
-        ];
-
         let vertices = self.simulation.particles_to_circle_vertices();
         println!("Vertices: {vertices:?}");
 
@@ -545,12 +529,7 @@ impl WindowState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         store: wgpu::StoreOp::Store,
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.1,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(crate::CLEAR_COLOR),
                     },
                 })],
                 depth_stencil_attachment: None,
@@ -558,7 +537,7 @@ impl WindowState {
                 occlusion_query_set: None,
             });
 
-            _render_pass.set_pipeline(self.renderer.pipeline(PipelineType::CircleFade));
+            _render_pass.set_pipeline(self.renderer.pipeline(PipelineType::CircleFill));
             _render_pass.set_bind_group(0, self.renderer.camera().bind_group(), &[]);
 
             _render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer().slice(..));
