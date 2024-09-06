@@ -18,7 +18,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::camera::{self, Camera, Camera2D};
 use crate::render_context::{PipelineType, RenderContext, Vertex};
-use crate::simulation::Particle;
+use crate::simulation::{Particle, SimulationContext};
 
 pub struct Application {
     reciever: Receiver<Action>,
@@ -331,6 +331,9 @@ pub struct WindowState {
     /// Context for rendering to the window
     renderer: RenderContext<Camera2D>,
 
+    /// The simulation
+    simulation: SimulationContext,
+
     // Miscelaneous window information
     position: PhysicalPosition<i32>,
     mouse_position: PhysicalPosition<i32>,
@@ -409,6 +412,7 @@ impl WindowState {
         };
 
         let renderer = RenderContext::<CameraType>::new(&device, &config);
+        let simulation = SimulationContext::new();
 
         Ok(Self {
             surface,
@@ -418,6 +422,8 @@ impl WindowState {
             queue,
 
             renderer,
+
+            simulation,
 
             position: Default::default(),
             mouse_position: Default::default(),
@@ -482,7 +488,7 @@ impl WindowState {
         ];
 
         let particle1 = Particle {
-            position: [0.0, 0.0, 0.0].into(),
+            position: [0.0, 0.0].into(),
             radius: 500.0,
         };
 
