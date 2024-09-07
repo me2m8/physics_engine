@@ -11,4 +11,5 @@ pub const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
-pub const MAX_VERTICES: usize = 1024;
+pub const MAX_QUADS: usize = 1024;
+pub const MAX_LINES: usize = 1024;

@@ -11,8 +11,7 @@ struct VertexOutput {
 }
 
 struct Camera2D {
-    @location(0) position: vec4<f32>,
-    @location(1) viewport: vec2<f32>,
+    camera_matrix: mat4x4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera2D;
@@ -23,7 +22,7 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    out.clip_position = vec4<f32>((in.position.xy - camera.position.xy) / camera.viewport, in.position.zw);
+    out.clip_position = camera.camera_matrix * in.position;
     out.color = in.color;
     out.frag_coord = in.frag_coord;
 

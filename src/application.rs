@@ -1,4 +1,5 @@
 use core::panic;
+use std::ops::Div;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
@@ -17,8 +18,10 @@ use winit::platform::startup_notify::{
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::camera::{self, Camera, Camera2D};
-use crate::render_context::{quad_indicies_from_verticies, PipelineType, RenderContext, Vertex};
-use crate::simulation::{Particle, SimulationContext};
+use crate::render_context::{
+    quad_indicies_from_verticies, PipelineType, QuadVertex, RenderContext,
+};
+use crate::simulation::{simulation_border, Particle, SimulationContext};
 
 pub struct Application {
     reciever: Receiver<Action>,
@@ -459,96 +462,21 @@ impl WindowState {
         self.window.set_maximized(!maximized);
     }
 
-    pub fn draw(&self) {
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Command Encoder"),
-            });
+    pub fn draw(&mut self) {
+        let b4 = std::time::Instant::now();
+        self.renderer
+            .quad_vertices
+            .append(&mut self.simulation.particles_to_circle_vertices());
 
-        let output = self.surface.get_current_texture().unwrap();
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.renderer
+            .line_vertices
+            .append(&mut simulation_border().into());
 
-        let vertices = self.simulation.particles_to_circle_vertices();
-        println!("Vertices: {vertices:?}");
+        self.renderer.present_scene(&self.queue, &self.device, &self.surface);
 
-        let indicies = quad_indicies_from_verticies(&vertices).unwrap();
-
-        // Buffer Writes
-        {
-            let mut vertex_buffer = self
-                .queue
-                .write_buffer_with(
-                    self.renderer.vertex_buffer(),
-                    0,
-                    NonZero::new((size_of::<Vertex>() * vertices.len()) as u64).unwrap(),
-                )
-                .unwrap();
-
-            vertex_buffer
-                .as_mut()
-                .copy_from_slice(bytemuck::cast_slice(&vertices));
-
-            let mut index_buffer = self
-                .queue
-                .write_buffer_with(
-                    self.renderer.index_buffer(),
-                    0,
-                    NonZero::new((size_of::<u16>() * indicies.len()) as u64).unwrap(),
-                )
-                .unwrap();
-
-            index_buffer
-                .as_mut()
-                .copy_from_slice(bytemuck::cast_slice(&indicies));
-
-            let mut camera_buffer = self
-                .queue
-                .write_buffer_with(
-                    self.renderer.camera().uniform_buffer(),
-                    0,
-                    NonZero::new(size_of::<RawCameraType>() as u64).unwrap(),
-                )
-                .unwrap();
-
-            camera_buffer
-                .as_mut()
-                .copy_from_slice(bytemuck::cast_slice(&[self.renderer.camera().to_raw()]));
-        }
-
-        self.queue().submit([]);
-
-        // Render pass
-        {
-            let mut _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        store: wgpu::StoreOp::Store,
-                        load: wgpu::LoadOp::Clear(crate::CLEAR_COLOR),
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            _render_pass.set_pipeline(self.renderer.pipeline(PipelineType::CircleFill));
-            _render_pass.set_bind_group(0, self.renderer.camera().bind_group(), &[]);
-
-            _render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer().slice(..));
-            _render_pass
-                .set_index_buffer(self.renderer.index_buffer().slice(..), IndexFormat::Uint16);
-
-            _render_pass.draw_indexed(0..indicies.len() as u32, 0, 0..1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        let dt = std::time::Instant::now() - b4;
+        let fps = 1.0 / dt.as_secs_f64();
+        println!("Time per frame: {dt:?}, Equivalent framerate: {fps} fps");
     }
 
     pub const fn config(&self) -> &wgpu::SurfaceConfiguration {

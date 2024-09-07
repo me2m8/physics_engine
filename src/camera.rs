@@ -1,4 +1,4 @@
-use cgmath::{vec2, Matrix4, Vector2, Vector3};
+use cgmath::{vec2, Matrix4, Vector2, Vector3, VectorSpace};
 use wgpu::{
     BindGroup, BindGroupLayout, BindingType, Buffer, BufferBindingType, BufferUsages, Device,
     ShaderStages,
@@ -78,8 +78,8 @@ where
 }
 
 pub trait Camera {
-    type Raw;
-    type NDVector;
+    type Raw: bytemuck::Pod + bytemuck::Zeroable;
+    type NDVector: VectorSpace;
 
     fn new(viewport: Vector2<f32>) -> Self;
     fn to_raw(&self) -> Self::Raw;
@@ -92,10 +92,9 @@ pub trait Camera {
 //
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RawCamera2D {
-    position: [f32; 4],
-    viewport: [f32; 2],
+    matrix: [[f32; 4]; 4],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -117,10 +116,16 @@ impl Camera for Camera2D {
 
     /// returns the camera data for buffer binding
     fn to_raw(&self) -> RawCamera2D {
+        let scale = self.viewport.x / 4.0;
+        let ratio = 3.0 * self.viewport.y / self.viewport.x;
         RawCamera2D {
-            position: [self.position.x, self.position.y, 0.0, 1.0],
-            // Divide by 4 to make the scaling work out
-            viewport: (self.viewport / 4.0).into(),
+            #[rustfmt::skip]
+            matrix: Matrix4::new(
+                1.0 / scale, 0.0,           0.0, 0.0,
+                0.0,         ratio / scale, 0.0, 0.0,
+                0.0,         0.0,           0.5, 0.5,
+                0.0,         0.0,           0.0, 1.0,
+            ).into(),
         }
     }
 
@@ -137,6 +142,7 @@ impl Camera for Camera2D {
 // Camera3D
 //
 
+#[allow(unused)]
 #[derive(Clone, Copy, Debug)]
 pub struct Camera3D {
     eye: Vector3<f32>,
@@ -145,6 +151,7 @@ pub struct Camera3D {
     fov: f32,
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy, Debug)]
 pub struct RawCamera3D {
     projection_matrix: Matrix4<f32>,
