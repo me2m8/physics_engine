@@ -2,6 +2,7 @@ pub mod application;
 pub mod camera;
 pub mod render_context;
 pub mod simulation;
+pub mod shaders;
 
 pub const PARTICLE_COLOR: [f32; 4] = [0.0, 0.5, 1.0, 1.0];
 pub const CLEAR_COLOR: wgpu::Color = wgpu::Color {

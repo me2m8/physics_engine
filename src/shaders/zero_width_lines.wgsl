@@ -1,5 +1,4 @@
-
-struct VertexInput {
+struct LineVertex {
     @location(0) position: vec4<f32>, 
     @location(1) color: vec4<f32>,
 }
@@ -17,7 +16,7 @@ struct Camera2D {
 
 @vertex
 fn vs_main(
-    in: VertexInput
+    in: LineVertex 
 ) -> VertexOutput {
     var out: VertexOutput;
 

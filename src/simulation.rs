@@ -2,7 +2,6 @@ use cgmath::{vec2, vec4, Vector2};
 use itertools::Itertools;
 
 use crate::render_context::{LineVertex, QuadVertex};
-use std::f32::consts::SQRT_2;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Particle {
@@ -14,13 +13,13 @@ impl Particle {
     pub fn to_vertices(&self) -> [QuadVertex; 4] {
         use crate::PARTICLE_COLOR;
 
-        let rad_root_2 = SQRT_2 * self.radius;
+        let rad = self.radius;
 
         let center = vec4(self.position.x, self.position.y, 0.0, 1.0);
-        let bl = vec4(-rad_root_2, -rad_root_2, 0.0, 1.0);
-        let br = vec4(rad_root_2, -rad_root_2, 0.0, 1.0);
-        let tr = vec4(rad_root_2, rad_root_2, 0.0, 1.0);
-        let tl = vec4(-rad_root_2, rad_root_2, 0.0, 1.0);
+        let bl = vec4(-rad, -rad, 0.0, 0.0);
+        let br = vec4( rad, -rad, 0.0, 0.0);
+        let tr = vec4( rad,  rad, 0.0, 0.0);
+        let tl = vec4(-rad,  rad, 0.0, 0.0);
 
         [
             QuadVertex {
@@ -59,8 +58,8 @@ impl SimulationContext {
         let mut particles = (0..100)
             .map(|_| Particle {
                 position: vec2(
-                    (rand::random::<f32>() * 2.0 - 1.0) * BOUNDARY_WIDTH / 2.0,
-                    (rand::random::<f32>() * 2.0 - 1.0) * BOUNDARY_HEIGHT / 2.0,
+                    dbg!(rand::random::<f32>() - 0.5) * BOUNDARY_WIDTH,
+                    dbg!(rand::random::<f32>() - 0.5) * BOUNDARY_HEIGHT,
                 ),
                 radius: 10.0,
             })
@@ -87,12 +86,13 @@ impl Default for SimulationContext {
 }
 
 pub fn simulation_border() -> [LineVertex; 4] {
-    use std::f32::consts::FRAC_1_SQRT_2;
+    let hw = BOUNDARY_WIDTH / 2.0;
+    let hh = BOUNDARY_HEIGHT / 2.0;
 
-    let bl = vec4(-BOUNDARY_WIDTH * FRAC_1_SQRT_2, -BOUNDARY_HEIGHT * FRAC_1_SQRT_2, 0.0, 1.0);
-    let br = vec4( BOUNDARY_WIDTH * FRAC_1_SQRT_2, -BOUNDARY_HEIGHT * FRAC_1_SQRT_2, 0.0, 1.0);
-    let tr = vec4( BOUNDARY_WIDTH * FRAC_1_SQRT_2,  BOUNDARY_HEIGHT * FRAC_1_SQRT_2, 0.0, 1.0);
-    let tl = vec4(-BOUNDARY_WIDTH * FRAC_1_SQRT_2,  BOUNDARY_HEIGHT * FRAC_1_SQRT_2, 0.0, 1.0);
+    let bl = vec4(-hw, -hh, 0.0, 1.0);
+    let br = vec4( hw, -hh, 0.0, 1.0);
+    let tr = vec4( hw,  hh, 0.0, 1.0);
+    let tl = vec4(-hw,  hh, 0.0, 1.0);
 
     [
         LineVertex { position: bl.into(), color: [1.0, 1.0, 1.0, 1.0] },

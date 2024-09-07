@@ -116,15 +116,19 @@ impl Camera for Camera2D {
 
     /// returns the camera data for buffer binding
     fn to_raw(&self) -> RawCamera2D {
-        let scale = self.viewport.x / 4.0;
-        let ratio = 3.0 * self.viewport.y / self.viewport.x;
+        let width = self.viewport.x;
+        let height = self.viewport.y;
+
+        let far =  1.0;
+        let near = 0.0;
+
         RawCamera2D {
             #[rustfmt::skip]
             matrix: Matrix4::new(
-                1.0 / scale, 0.0,           0.0, 0.0,
-                0.0,         ratio / scale, 0.0, 0.0,
-                0.0,         0.0,           0.5, 0.5,
-                0.0,         0.0,           0.0, 1.0,
+                2.0 / width, 0.0,           0.0,                  0.0,
+                0.0,         2.0 / height,  0.0,                  0.0,
+                0.0,         0.0,          -2.0 / (far - near),   0.0,
+                0.0,         0.0,           0.0,                  1.0,
             ).into(),
         }
     }

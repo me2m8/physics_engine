@@ -1,11 +1,8 @@
-use core::panic;
-use std::ops::Div;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
-use std::num::NonZero;
 use std::sync::mpsc::{Receiver, Sender};
-use wgpu::{Device, IndexFormat, Queue, Surface};
+use wgpu::{Device, Queue, Surface};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, WindowEvent};
@@ -17,11 +14,9 @@ use winit::platform::startup_notify::{
 };
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::camera::{self, Camera, Camera2D};
-use crate::render_context::{
-    quad_indicies_from_verticies, PipelineType, QuadVertex, RenderContext,
-};
-use crate::simulation::{simulation_border, Particle, SimulationContext};
+use crate::camera::{self, Camera2D};
+use crate::render_context::RenderContext;
+use crate::simulation::{simulation_border, SimulationContext};
 
 pub struct Application {
     reciever: Receiver<Action>,
