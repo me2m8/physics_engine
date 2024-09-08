@@ -51,7 +51,7 @@ where
         let viewport = vec2(config.width as f32, config.height as f32);
         let camera = CameraState::new(device, viewport);
 
-        let pipelines = make_pipelines(device, &camera, config);
+        let pipelines = make_pipelines(device, config, &camera);
 
         let quad_vb = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),

@@ -30,8 +30,8 @@ pub enum PipelineType {
 
 pub fn make_pipelines<T: Camera + Sized>(
     device: &wgpu::Device,
-    camera: &CameraState<T>,
     config: &SurfaceConfiguration,
+    camera: &CameraState<T>,
 ) -> HashMap<PipelineType, wgpu::RenderPipeline> {
     use super::include_many_wgsl;
 

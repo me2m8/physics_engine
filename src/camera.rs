@@ -119,7 +119,7 @@ impl Camera for Camera2D {
         let width = self.viewport.x;
         let height = self.viewport.y;
 
-        let far =  1.0;
+        let far = 1.0;
         let near = 0.0;
 
         RawCamera2D {
@@ -140,6 +140,39 @@ impl Camera for Camera2D {
     fn change_viewport(&mut self, viewport: Vector2<f32>) {
         self.viewport = viewport;
     }
+}
+
+fn orthographic_projection(
+    width: f32,
+    height: f32,
+    top_left_x: f32,
+    top_left_y: f32,
+) -> Matrix4<f32> {
+    let near = 0.0;
+    let far = 1.0;
+    let right = top_left_x + width;
+    let left = top_left_y;
+    let bottom = top_left_y - height;
+    let top = top_left_y;
+
+    Matrix4::new(
+        2.0 / (right - left),
+        0.0,
+        0.0,
+        -(right + left) / (right - left),
+        0.0,
+        2.0 / (top - bottom),
+        0.0,
+        -(top + bottom) / (top - bottom),
+        0.0,
+        0.0,
+        -2.0 / (far - near),
+        -(far + near) / (far - near),
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    )
 }
 
 //

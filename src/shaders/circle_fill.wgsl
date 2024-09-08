@@ -20,9 +20,17 @@ struct VertexOutput {
 fn vs_main(
     in: QuadVertex
 ) -> VertexOutput {
+
+    let translation = mat4x4<f32>(
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    );
+
     var out: VertexOutput;
 
-    out.clip_position = camera.camera_matrix * in.position;
+    out.clip_position = camera.camera_matrix * translation * in.position;
     out.color = in.color;
     out.frag_coord = in.frag_coord;
 
