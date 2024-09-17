@@ -1,3 +1,4 @@
+use cgmath::{Vector2, Zero};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
@@ -14,9 +15,9 @@ use winit::platform::startup_notify::{
 };
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::camera::{self, Camera2D};
+use crate::camera::Camera2D;
 use crate::render_context::RenderContext;
-use crate::simulation::{simulation_border, SimulationContext};
+use crate::simulation::{draw_body, Particle, Simulation};
 
 pub struct Application {
     reciever: Receiver<Action>,
@@ -260,6 +261,8 @@ impl ApplicationHandler for Application {
             // WindowEvent::MouseWheel { device_id, delta, phase } => todo!(),
             // WindowEvent::MouseInput { device_id, state, button } => todo!(),
             WindowEvent::RedrawRequested => {
+                window.simulation.update();
+                dbg!(&window.simulation.bodies[0]);
                 window.draw();
             }
             _ => {}
@@ -292,6 +295,10 @@ impl ApplicationHandler for Application {
         if self.windows.is_empty() {
             event_loop.exit();
         }
+
+        self.windows
+            .values()
+            .for_each(|window| window.window.request_redraw());
     }
 
     fn suspended(&mut self, event_loop: &dyn ActiveEventLoop) {
@@ -330,7 +337,7 @@ pub struct WindowState {
     renderer: RenderContext<Camera2D>,
 
     /// The simulation
-    simulation: SimulationContext,
+    simulation: Simulation,
 
     // Miscelaneous window information
     position: PhysicalPosition<i32>,
@@ -343,7 +350,6 @@ pub struct WindowState {
 }
 
 type CameraType = Camera2D;
-type RawCameraType = <CameraType as camera::Camera>::Raw;
 
 impl WindowState {
     pub async fn new(
@@ -410,7 +416,7 @@ impl WindowState {
         };
 
         let renderer = RenderContext::<CameraType>::new(&device, &config);
-        let simulation = SimulationContext::new();
+        let simulation = Simulation::new(500);
 
         Ok(Self {
             surface,
@@ -459,15 +465,18 @@ impl WindowState {
 
     pub fn draw(&mut self) {
         let b4 = std::time::Instant::now();
-        self.renderer
-            .quad_vertices
-            .append(&mut self.simulation.particles_to_circle_vertices());
+
+        let mut bodies = self
+            .simulation
+            .bodies
+            .iter()
+            .flat_map(|b| draw_body(*b, 1.0))
+            .collect_vec();
+
+        self.renderer.circle_vertices.append(&mut bodies);
 
         self.renderer
-            .line_vertices
-            .append(&mut simulation_border().into());
-
-        self.renderer.present_scene(&self.queue, &self.device, &self.surface);
+            .present_scene(&self.queue, &self.device, &self.surface);
 
         let dt = std::time::Instant::now() - b4;
         let fps = 1.0 / dt.as_secs_f64();

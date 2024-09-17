@@ -63,6 +63,10 @@ where
         }
     }
 
+    pub fn viewport_size(&self) -> Vector2<f32> {
+        self.camera.viewport_size()
+    }
+
     pub fn to_raw(&self) -> C::Raw {
         self.camera.to_raw()
     }
@@ -83,6 +87,8 @@ pub trait Camera {
 
     fn new(viewport: Vector2<f32>) -> Self;
     fn to_raw(&self) -> Self::Raw;
+    fn position(&self) -> Self::NDVector;
+    fn viewport_size(&self) -> Vector2<f32>;
     fn translate(&mut self, position: Self::NDVector);
     fn change_viewport(&mut self, viewport: Vector2<f32>);
 }
@@ -131,6 +137,14 @@ impl Camera for Camera2D {
                 0.0,         0.0,           0.0,                  1.0,
             ).into(),
         }
+    }
+
+    fn position(&self) -> Self::NDVector {
+        self.position
+    }
+
+    fn viewport_size(&self) -> Vector2<f32> {
+        self.viewport
     }
 
     fn translate(&mut self, position: Self::NDVector) {
