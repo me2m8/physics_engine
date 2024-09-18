@@ -1,6 +1,6 @@
 use std::{f32::consts::TAU, thread::spawn};
 
-use crate::render_context::QuadVertex;
+use crate::render_context::CircleVertex;
 
 use cgmath::{vec2, InnerSpace, MetricSpace, Vector2, Zero};
 use itertools::Itertools;
@@ -96,7 +96,7 @@ impl Simulation {
     }
 }
 
-pub fn draw_body(body: Particle, radius: f32) -> [QuadVertex; 4] {
+pub fn draw_body(body: Particle, radius: f32) -> [CircleVertex; 4] {
     let center: Vector2<f32> = body.position;
     let rad = Vector2::new(radius, -radius);
 
@@ -108,9 +108,9 @@ pub fn draw_body(body: Particle, radius: f32) -> [QuadVertex; 4] {
     let color = [1.0, 1.0, 1.0, 1.0];
 
     [
-        QuadVertex::new(bl, color, [-1.0, -1.0]),
-        QuadVertex::new(br, color, [1.0, -1.0]),
-        QuadVertex::new(tr, color, [1.0, 1.0]),
-        QuadVertex::new(tl, color, [-1.0, 1.0]),
+        CircleVertex::new(bl, color, [-1.0, -1.0]),
+        CircleVertex::new(br, color, [1.0, -1.0]),
+        CircleVertex::new(tr, color, [1.0, 1.0]),
+        CircleVertex::new(tl, color, [-1.0, 1.0]),
     ]
 }

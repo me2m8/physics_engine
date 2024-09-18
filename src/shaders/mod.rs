@@ -6,7 +6,7 @@ use wgpu::{
 
 use crate::{
     camera::{Camera, CameraState},
-    render_context::{LineVertex, QuadVertex},
+    render_context::{LineVertex, CircleVertex},
 };
 
 #[macro_export]
@@ -85,7 +85,7 @@ pub fn make_pipelines<T: Camera + Sized>(
                 module: shaders.get("polygon_fill.wgsl").unwrap(),
                 entry_point: "vs_main",
                 compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[QuadVertex::DESC],
+                buffers: &[CircleVertex::DESC],
             },
             fragment: Some(FragmentState {
                 module: shaders.get("polygon_fill.wgsl").unwrap(),
@@ -127,7 +127,7 @@ pub fn make_pipelines<T: Camera + Sized>(
                 module: shaders.get("circle_fill.wgsl").unwrap(),
                 entry_point: "vs_main",
                 compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[QuadVertex::DESC],
+                buffers: &[CircleVertex::DESC],
             },
             fragment: Some(FragmentState {
                 module: shaders.get("circle_fill.wgsl").unwrap(),
@@ -169,7 +169,7 @@ pub fn make_pipelines<T: Camera + Sized>(
                 module: shaders.get("circle_fade.wgsl").unwrap(),
                 entry_point: "vs_main",
                 compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[QuadVertex::DESC],
+                buffers: &[CircleVertex::DESC],
             },
             fragment: Some(FragmentState {
                 module: shaders.get("circle_fade.wgsl").unwrap(),

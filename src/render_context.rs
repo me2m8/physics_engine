@@ -1,15 +1,11 @@
 #![allow(unused)]
 use core::num;
-use std::{borrow::Cow, collections::HashMap, error::Error, num::NonZero};
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, error::Error, num::NonZero};
 
 use cgmath::{vec2, Vector2, Vector3, Vector4};
 use itertools::Itertools;
 use wgpu::{
-    include_wgsl, util::RenderEncoder, vertex_attr_array, BlendComponent, BlendState, Buffer,
-    BufferAddress, BufferUsages, ColorWrites, Device, FragmentState, FrontFace,
-    PipelineCompilationOptions, PrimitiveState, PrimitiveTopology, Queue, QueueWriteBufferView,
-    RenderPipeline, ShaderModule, Surface, SurfaceConfiguration, VertexAttribute,
-    VertexBufferLayout,
+    include_wgsl, util::{DeviceExt, RenderEncoder}, vertex_attr_array, BlendComponent, BlendState, Buffer, BufferAddress, BufferUsages, ColorWrites, Device, FragmentState, FrontFace, PipelineCompilationOptions, PrimitiveState, PrimitiveTopology, Queue, QueueWriteBufferView, RenderPipeline, ShaderModule, Surface, SurfaceConfiguration, VertexAttribute, VertexBufferLayout
 };
 
 use crate::{
@@ -24,27 +20,11 @@ where
     C: Camera + Sized,
 {
     pipelines: HashMap<PipelineType, wgpu::RenderPipeline>,
-
     camera: CameraState<C>,
 
-    // This is safe because the buffer view is dropped before the buffer
-    circle_vb_view: Option<QueueWriteBufferView<'static>>,
-    circle_ib_view: Option<QueueWriteBufferView<'static>>,
-
-    line_vb_view: Option<QueueWriteBufferView<'static>>,
-    line_ib_view: Option<QueueWriteBufferView<'static>>,
-
-    pub circle_vertices: Vec<QuadVertex>,
-    circle_vb: Buffer,
-    circle_ib: Buffer,
-
-    pub line_vertices: Vec<LineVertex>,
-    line_vb: Buffer,
-    line_ib: Buffer,
-
-    pub arrow_vertices: Vec<LineVertex>,
-    arrow_vb: Buffer,
-    arrow_ib: Buffer,
+    circles: RefCell<Primitive<CircleVertex>>,
+    thin_line: RefCell<Primitive<LineVertex>>,
+    arrow: RefCell<Primitive<ArrowVertex>>,
 }
 
 impl<C> RenderContext<C>
@@ -65,7 +45,7 @@ where
 
         let circle_vb = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
-            size: (size_of::<[QuadVertex; 4]>() * crate::MAX_QUADS) as u64,
+            size: (size_of::<[CircleVertex; 4]>() * crate::MAX_QUADS) as u64,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -94,34 +74,20 @@ where
         /// TODO: Fix arrow buffers
         let arrow_vb = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
-            size: (size_of::<[QuadVertex; 4]>() * crate::MAX_QUADS) as u64,
+            size: (size_of::<[ArrowVertex; 4]>() * crate::MAX_ARROWS) as u64,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let arrow_ib = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Index Buffer"),
-            size: (size_of::<u16>() * crate::MAX_QUADS * 6) as u64,
+            size: (size_of::<u16>() * crate::MAX_ARROWS * 9) as u64,
             usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         Self {
-            circle_vertices: Default::default(),
-            circle_vb,
-            circle_ib,
-
-            line_vertices: Default::default(),
-            line_vb,
-            line_ib,
-
-            circle_vb_view: None,
-            circle_ib_view: None,
-            line_vb_view: None,
-            line_ib_view: None,
-
             camera,
-
             pipelines,
         }
     }
@@ -131,67 +97,8 @@ where
         panic!("Currently does nothing")
     }
 
-    fn init_circle_buffer_views(&mut self, queue: &Queue, num_vertices: usize) {
-        // NOTE: This is safe because the views are dropped before the buffers
-        self.circle_vb_view = Some(unsafe {
-            std::mem::transmute::<wgpu::QueueWriteBufferView<'_>, wgpu::QueueWriteBufferView<'_>>(
-                queue
-                    .write_buffer_with(
-                        self.circle_vb(),
-                        0,
-                        NonZero::new((size_of::<QuadVertex>() * num_vertices) as u64).unwrap(),
-                    )
-                    .unwrap(),
-            )
-        });
-        self.circle_ib_view = Some(unsafe {
-            std::mem::transmute::<wgpu::QueueWriteBufferView<'_>, wgpu::QueueWriteBufferView<'_>>(
-                queue
-                    .write_buffer_with(
-                        self.circle_ib(),
-                        0,
-                        NonZero::new((size_of::<u16>() * num_vertices * 3 / 2) as u64).unwrap(),
-                    )
-                    .unwrap(),
-            )
-        });
-    }
-    fn init_line_buffer_views(&mut self, queue: &Queue, num_vertices: usize) {
-        // NOTE: This is safe because the views are dropped before the buffers
-        self.line_vb_view = Some(unsafe {
-            std::mem::transmute::<wgpu::QueueWriteBufferView<'_>, wgpu::QueueWriteBufferView<'_>>(
-                queue
-                    .write_buffer_with(
-                        self.line_vb(),
-                        0,
-                        NonZero::new((size_of::<LineVertex>() * num_vertices) as u64).unwrap(),
-                    )
-                    .unwrap(),
-            )
-        });
-        self.line_ib_view = Some(unsafe {
-            std::mem::transmute::<wgpu::QueueWriteBufferView<'_>, wgpu::QueueWriteBufferView<'_>>(
-                queue
-                    .write_buffer_with(
-                        self.line_ib(),
-                        0,
-                        NonZero::new((size_of::<u16>() * num_vertices * 2) as u64).unwrap(),
-                    )
-                    .unwrap(),
-            )
-        });
-    }
-
     pub fn present_scene(&mut self, queue: &Queue, device: &Device, surface: &Surface) {
         // writing the buffers with stored vertices
-        let mut circle_indicies = 0;
-        if !self.circle_vertices.is_empty() {
-            circle_indicies = self.write_circle_buffer(queue);
-        }
-        let mut line_indicies = 0;
-        if !self.line_vertices.is_empty() {
-            line_indicies = self.write_line_buffer(queue);
-        }
 
         self.write_camera_buffer(queue);
 
@@ -229,70 +136,24 @@ where
             render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
             // Draw the Lines
-            render_pass.set_pipeline(self.pipeline(PipelineType::ZeroWidthLines));
+            // render_pass.set_pipeline(self.pipeline(PipelineType::ZeroWidthLines));
 
-            render_pass.set_vertex_buffer(0, self.line_vb.slice(..));
-            render_pass.set_index_buffer(self.line_ib.slice(..), wgpu::IndexFormat::Uint16);
+            // render_pass.set_vertex_buffer(0, self.line_vb.slice(..));
+            // render_pass.set_index_buffer(self.line_ib.slice(..), wgpu::IndexFormat::Uint16);
 
-            render_pass.draw_indexed(0..line_indicies, 0, 0..1);
+            // render_pass.draw_indexed(0..line_indicies, 0, 0..1);
 
-            // Draw the Circles
-            render_pass.set_pipeline(self.pipeline(PipelineType::CircleFill));
+            // // Draw the Circles
+            // render_pass.set_pipeline(self.pipeline(PipelineType::CircleFill));
 
-            render_pass.set_vertex_buffer(0, self.circle_vb.slice(..));
-            render_pass.set_index_buffer(self.circle_ib.slice(..), wgpu::IndexFormat::Uint16);
+            // render_pass.set_vertex_buffer(0, self.circle_vb.slice(..));
+            // render_pass.set_index_buffer(self.circle_ib.slice(..), wgpu::IndexFormat::Uint16);
 
-            render_pass.draw_indexed(0..circle_indicies, 0, 0..1);
+            // render_pass.draw_indexed(0..circle_indicies, 0, 0..1);
         }
 
         queue.submit(std::iter::once(encoder.finish()));
         output.present();
-    }
-
-    /// Writes the circle vertex buffer and index buffer and returns the number of indicies
-    fn write_circle_buffer(&mut self, queue: &Queue) -> u32 {
-        self.init_circle_buffer_views(queue, self.circle_vertices.len());
-
-        let indicies = circle_indicies_from_verticies(&self.circle_vertices).unwrap();
-
-        self.circle_vb_view
-            .as_mut()
-            .unwrap()
-            .copy_from_slice(bytemuck::cast_slice(&self.circle_vertices));
-        self.circle_ib_view
-            .as_mut()
-            .unwrap()
-            .copy_from_slice(bytemuck::cast_slice(&indicies));
-
-        self.circle_vb_view = None;
-        self.circle_ib_view = None;
-
-        self.circle_vertices.clear();
-
-        indicies.len() as u32
-    }
-
-    /// Writes the line vertex buffer and index buffer and returns the number of indicies
-    fn write_line_buffer(&mut self, queue: &Queue) -> u32 {
-        self.init_line_buffer_views(queue, self.line_vertices.len());
-
-        let indicies = line_indicies_from_vertices(&self.line_vertices, true).unwrap();
-
-        self.line_vb_view
-            .as_mut()
-            .unwrap()
-            .copy_from_slice(bytemuck::cast_slice(&self.line_vertices));
-        self.line_ib_view
-            .as_mut()
-            .unwrap()
-            .copy_from_slice(bytemuck::cast_slice(&indicies));
-
-        self.line_vb_view = None;
-        self.line_ib_view = None;
-
-        self.line_vertices.clear();
-
-        indicies.len() as u32
     }
 
     /// Writes the camera uniform buffer
@@ -322,57 +183,161 @@ where
     pub fn viewport_size(&self) -> Vector2<f32> {
         self.camera.viewport_size()
     }
-
-    /// Gets a reference to the circle vertex buffer
-    pub fn circle_vb(&self) -> &Buffer {
-        &self.circle_vb
-    }
-
-    /// Gets a reference to the circle index buffer
-    pub fn circle_ib(&self) -> &Buffer {
-        &self.circle_ib
-    }
-
-    /// Gets a reference to the line vertex buffer
-    pub fn line_vb(&self) -> &Buffer {
-        &self.line_vb
-    }
-
-    /// Gets a reference to the line index buffer
-    pub fn line_ib(&self) -> &Buffer {
-        &self.line_ib
-    }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct QuadVertex {
-    pub position: [f32; 4],
-    pub color: [f32; 4],
-    pub frag_coord: [f32; 2],
+//
+// PRIMITIVES
+//
+
+pub struct Primitive<V: Vertex + Sized> {
+    vertices: Vec<V>,
+    indicies: Vec<u16>,
+    ib: Buffer,
+    vb: Buffer,
 }
 
-impl QuadVertex {
-    pub fn new(
-        position: impl Into<[f32; 2]>,
-        color: impl Into<[f32; 4]>,
-        frag_coord: impl Into<[f32; 2]>,
-    ) -> Self {
-        let p = position.into();
+impl<T: Vertex + Sized> Primitive<T> {
+    fn new(device: &Device, num_verts: usize, num_ind: usize, max_prim: usize) -> Self {
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vertex Buffer"),
+            size: (size_of::<T>() * max_prim * num_verts) as u64,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let ib = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Index Buffer"),
+            size: (size_of::<u16>() * max_prim * num_ind) as u64,
+            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
-            position: [p[0], p[1], 0.0, 1.0],
-            color: color.into(),
-            frag_coord: frag_coord.into(),
+            vertices: Default::default(),
+            indicies: Default::default(),
+
+            ib,
+            vb,
         }
     }
-    const ATTRIBS: &'static [VertexAttribute] =
-        &vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x2];
+    pub fn add_vertices(&mut self, vertices: &[T]) {
+        self.vertices.extend(vertices.iter());
+    }
+    pub fn add_indicies(&mut self, indicies: &[u16]) {
+        let num_vertices = self.vertices.len() as u16;
+        self.indicies
+            .extend(indicies.iter().map(|i| i + num_vertices));
+    }
 
-    pub const DESC: VertexBufferLayout<'static> = VertexBufferLayout {
+    pub fn add_primitive(&mut self, vertices: &[T], indicies: &[u16]) {
+        self.add_indicies(indicies);
+        self.add_vertices(vertices);
+    }
+
+    pub fn ib(&self) -> &Buffer {
+        &self.ib
+    }
+    pub fn vb(&self) -> &Buffer {
+        &self.vb
+    }
+}
+
+mod shapes {
+    use std::borrow::BorrowMut;
+
+    use cgmath::{vec3, vec4, Angle, Rad};
+
+    use crate::camera::Camera2D;
+
+    use super::*;
+
+    /// Draws a circle at a given position with a given radius and color
+    pub fn draw_circle_2d(
+        render_context: &RenderContext<Camera2D>,
+        p: Vector2<f32>,
+        r: f32,
+        color: Vector4<f32>,
+    ) {
+        let c = vec4(p.x, p.y, 0.0, 1.0);
+        let rad = vec3(r, -r, 0.0);
+
+        let bl = c - rad.xxzz();
+        let br = c - rad.yxzz();
+        let tr = c + rad.xxzz();
+        let tl = c + rad.yxzz();
+
+        #[rustfmt::skip]
+        let vertices = [
+            CircleVertex { p: bl.into(), c: color.into(), fc: [-1., -1.]},
+            CircleVertex { p: br.into(), c: color.into(), fc: [-1.,  1.]},
+            CircleVertex { p: tr.into(), c: color.into(), fc: [ 1.,  1.]},
+            CircleVertex { p: tl.into(), c: color.into(), fc: [ 1., -1.]},
+        ];
+        let indicies = [0, 1, 2, 2, 3, 0];
+
+        render_context
+            .circles
+            .borrow_mut()
+            .add_primitive(&vertices, &indicies);
+    }
+
+    pub fn construct_arrow_2d(
+        render_context: &RenderContext<Camera2D>,
+        length: f32,
+        line_thickness: f32,
+        point_length: f32,
+        point_width: f32,
+    ) -> impl Fn(Vector2<f32>, Rad<f32>) + '_ {
+        |p: Vector2<f32>, dir: Rad<f32>| move {
+            draw_arrow_2d(
+                render_context,
+                p,
+                dir,
+                length,
+                line_thickness,
+                point_length,
+                point_width,
+            );
+        }
+    }
+
+    ///
+    pub fn draw_arrow_2d(
+        render_context: &RenderContext<Camera2D>,
+        p: Vector2<f32>,
+        dir: Rad<f32>,
+        length: f32,
+        line_thickness: f32,
+        point_length: f32,
+        point_width: f32,
+    ) {
+    }
+}
+
+//
+// VERTICES
+//
+
+pub trait Vertex: std::marker::Sized + Copy {
+    const ATTRIBS: &'static [VertexAttribute];
+
+    const DESC: VertexBufferLayout<'static> = VertexBufferLayout {
         array_stride: std::mem::size_of::<Self>() as BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: Self::ATTRIBS,
     };
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CircleVertex {
+    pub p: [f32; 4],
+    pub c: [f32; 4],
+    pub fc: [f32; 2],
+}
+impl Vertex for CircleVertex {
+    const ATTRIBS: &'static [VertexAttribute] =
+        &vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x2];
 }
 
 #[repr(C)]
@@ -381,22 +346,8 @@ pub struct LineVertex {
     pub position: [f32; 4],
     pub color: [f32; 4],
 }
-
-impl LineVertex {
-    pub fn new(position: impl Into<[f32; 2]>, color: impl Into<[f32; 4]>) -> Self {
-        let p = position.into();
-        Self {
-            position: [p[0], p[1], 0.0, 1.0],
-            color: color.into(),
-        }
-    }
+impl Vertex for LineVertex {
     const ATTRIBS: &'static [VertexAttribute] = &vertex_attr_array![0 => Float32x4, 1 => Float32x4];
-
-    pub const DESC: VertexBufferLayout<'static> = VertexBufferLayout {
-        array_stride: std::mem::size_of::<Self>() as BufferAddress,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: Self::ATTRIBS,
-    };
 }
 
 #[repr(C)]
@@ -406,29 +357,14 @@ pub struct ArrowVertex {
     pub color: [f32; 4],
     pub frag_coord: [f32; 2],
 }
-
-impl ArrowVertex {
-    pub fn new(
-        position: impl Into<[f32; 2]>,
-        color: impl Into<[f32; 4]>,
-        frag_coord: impl Into<[f32; 2]>,
-    ) -> Self {
-        let p = position.into();
-        Self {
-            position: [p[0], p[1], 0.0, 1.0],
-            color: color.into(),
-            frag_coord: frag_coord.into(),
-        }
-    }
+impl Vertex for ArrowVertex {
     const ATTRIBS: &'static [VertexAttribute] =
         &vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x2];
-
-    pub const DESC: VertexBufferLayout<'static> = VertexBufferLayout {
-        array_stride: std::mem::size_of::<Self>() as BufferAddress,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: Self::ATTRIBS,
-    };
 }
+
+//
+// INSTANCES
+//
 
 pub struct RawInstance {
     transform: cgmath::Matrix4<f32>,
@@ -461,7 +397,13 @@ impl Instance {
     };
 }
 
-pub fn circle_indicies_from_verticies(vertices: &[QuadVertex]) -> Result<Vec<u16>, Box<dyn Error>> {
+//
+// Index Generating Functions
+//
+
+pub fn circle_indicies_from_verticies(
+    vertices: &[CircleVertex],
+) -> Result<Vec<u16>, Box<dyn Error>> {
     let num_vertices = vertices.len();
     if num_vertices % 4 != 0 {
         return Err("Vertex amount not divisible by 4, so the vertices cannot form quads".into());
