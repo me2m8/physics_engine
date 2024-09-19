@@ -1,9 +1,9 @@
-use cgmath::{Vector2, Zero};
+use cgmath::{vec2, vec4, Deg, Rad, Vector2, Zero};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::mpsc::{Receiver, Sender};
-use wgpu::{Device, Queue, Surface};
+use wgpu::{Device, Queue, Surface, TextureUsages};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, WindowEvent};
@@ -16,8 +16,10 @@ use winit::platform::startup_notify::{
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::camera::Camera2D;
-use crate::render_context::RenderContext;
-use crate::simulation::{draw_body, Particle, Simulation};
+use crate::render_context::shapes::{draw_arrow_2d, draw_circle_2d};
+use crate::render_context::{shapes, RenderContext};
+use crate::simulation::{Particle, Simulation};
+use crate::SAMPLE_COUNT;
 
 pub struct Application {
     reciever: Receiver<Action>,
@@ -328,6 +330,7 @@ pub struct WindowState {
     //
     /// The window surface
     surface: wgpu::Surface<'static>,
+    msaa: wgpu::Texture,
     config: wgpu::SurfaceConfiguration,
     _adapter: wgpu::Adapter,
     device: Device,
@@ -418,8 +421,11 @@ impl WindowState {
         let renderer = RenderContext::<CameraType>::new(&device, &config);
         let simulation = Simulation::new(500);
 
+        let msaa = Self::create_msaa_texture(&device, &config);
+
         Ok(Self {
             surface,
+            msaa,
             config,
             _adapter,
             device,
@@ -450,6 +456,7 @@ impl WindowState {
         self.config.height = height;
 
         self.surface.configure(self.device(), self.config());
+        self.msaa = Self::create_msaa_texture(self.device(), self.config());
         self.window.request_redraw();
     }
 
@@ -466,21 +473,44 @@ impl WindowState {
     pub fn draw(&mut self) {
         let b4 = std::time::Instant::now();
 
-        let mut bodies = self
-            .simulation
-            .bodies
-            .iter()
-            .flat_map(|b| draw_body(*b, 1.0))
-            .collect_vec();
+        // self.simulation.bodies.iter().for_each(|b| {
+        //     draw_circle_2d(&self.renderer, b.position, 1.0, vec4(1.0, 1.0, 1.0, 1.0))
+        // });
 
-        self.renderer.circle_vertices.append(&mut bodies);
+        draw_arrow_2d(
+            &self.renderer,
+            vec2(0., 0.),
+            self.simulation.arrow_dir,
+            5.0,
+            0.5,
+            1.0,
+            1.0,
+            vec4(1.0, 0.0, 0.0, 1.0),
+        );
 
         self.renderer
-            .present_scene(&self.queue, &self.device, &self.surface);
+            .present_scene(&self.queue, &self.device, &self.surface, &self.msaa);
 
         let dt = std::time::Instant::now() - b4;
         let fps = 1.0 / dt.as_secs_f64();
         println!("Time per frame: {dt:?}, Equivalent framerate: {fps} fps");
+    }
+
+    fn create_msaa_texture(device: &Device, config: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Nultisampling Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: SAMPLE_COUNT,
+            dimension: wgpu::TextureDimension::D2,
+            format: config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
     }
 
     pub const fn config(&self) -> &wgpu::SurfaceConfiguration {

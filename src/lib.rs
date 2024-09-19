@@ -12,6 +12,8 @@ pub const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
-pub const MAX_QUADS: usize = 1024;
+pub const SAMPLE_COUNT: u32 = 4;
+
+pub const MAX_CIRCLES: usize = 1024;
 pub const MAX_LINES: usize = 1024;
 pub const MAX_ARROWS: usize = 2048;

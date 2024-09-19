@@ -4,10 +4,10 @@ use physics_engine::application::Application;
 
 #[tokio::main]
 async fn main() {
-    // tracing_subscriber::fmt()
-    //     .with_max_level(tracing::Level::TRACE)
-    //     .with_timer(tracing_subscriber::fmt::time::uptime())
-    //     .init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .init();
 
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();

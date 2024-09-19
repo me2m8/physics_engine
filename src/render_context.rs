@@ -1,16 +1,26 @@
 #![allow(unused)]
 use core::num;
-use std::{borrow::Cow, cell::RefCell, collections::HashMap, error::Error, num::NonZero};
+use std::{
+    borrow::Cow, cell::RefCell, collections::HashMap, error::Error, fmt::Debug, num::NonZero,
+};
 
+use bytemuck::bytes_of;
 use cgmath::{vec2, Vector2, Vector3, Vector4};
+use image::Primitive;
 use itertools::Itertools;
+use log::info;
 use wgpu::{
-    include_wgsl, util::{DeviceExt, RenderEncoder}, vertex_attr_array, BlendComponent, BlendState, Buffer, BufferAddress, BufferUsages, ColorWrites, Device, FragmentState, FrontFace, PipelineCompilationOptions, PrimitiveState, PrimitiveTopology, Queue, QueueWriteBufferView, RenderPipeline, ShaderModule, Surface, SurfaceConfiguration, VertexAttribute, VertexBufferLayout
+    include_wgsl,
+    util::{DeviceExt, RenderEncoder},
+    vertex_attr_array, BlendComponent, BlendState, Buffer, BufferAddress, BufferSize, BufferUsages,
+    ColorWrites, Device, FragmentState, FrontFace, PipelineCompilationOptions, PrimitiveState,
+    PrimitiveTopology, Queue, QueueWriteBufferView, RenderPipeline, ShaderModule, Surface,
+    SurfaceConfiguration, Texture, VertexAttribute, VertexBufferLayout, COPY_BUFFER_ALIGNMENT,
 };
 
 use crate::{
-    camera::{Camera, CameraState},
-    MAX_QUADS,
+    camera::{Camera, Camera2D, CameraState},
+    MAX_CIRCLES, SAMPLE_COUNT,
 };
 
 use crate::shaders::{make_pipelines, PipelineType};
@@ -20,11 +30,12 @@ where
     C: Camera + Sized,
 {
     pipelines: HashMap<PipelineType, wgpu::RenderPipeline>,
+    config: wgpu::SurfaceConfiguration,
     camera: CameraState<C>,
 
-    circles: RefCell<Primitive<CircleVertex>>,
-    thin_line: RefCell<Primitive<LineVertex>>,
-    arrow: RefCell<Primitive<ArrowVertex>>,
+    circles: RefCell<DrawPrimitive<CircleVertex>>,
+    thin_lines: RefCell<DrawPrimitive<LineVertex>>,
+    arrows: RefCell<DrawPrimitive<ArrowVertex>>,
 }
 
 impl<C> RenderContext<C>
@@ -43,52 +54,18 @@ where
 
         let pipelines = make_pipelines(device, config, &camera);
 
-        let circle_vb = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Vertex Buffer"),
-            size: (size_of::<[CircleVertex; 4]>() * crate::MAX_QUADS) as u64,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let circle_ib = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Index Buffer"),
-            size: (size_of::<u16>() * crate::MAX_QUADS * 6) as u64,
-            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let line_vb = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Vertex Buffer"),
-            size: (size_of::<[LineVertex; 2]>() * crate::MAX_LINES) as u64,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let line_ib = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Index Buffer"),
-            size: (size_of::<u16>() * crate::MAX_LINES * 2) as u64,
-            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        /// TODO: Fix arrow buffers
-        let arrow_vb = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Vertex Buffer"),
-            size: (size_of::<[ArrowVertex; 4]>() * crate::MAX_ARROWS) as u64,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let arrow_ib = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Index Buffer"),
-            size: (size_of::<u16>() * crate::MAX_ARROWS * 9) as u64,
-            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let circles = RefCell::new(DrawPrimitive::new(device, 4, 6, crate::MAX_CIRCLES));
+        let thin_lines = RefCell::new(DrawPrimitive::new(device, 2, 2, crate::MAX_LINES));
+        let arrows = RefCell::new(DrawPrimitive::new(device, 7, 9, crate::MAX_ARROWS));
 
         Self {
             camera,
             pipelines,
+            config: config.clone(),
+
+            circles,
+            thin_lines,
+            arrows,
         }
     }
 
@@ -97,8 +74,28 @@ where
         panic!("Currently does nothing")
     }
 
-    pub fn present_scene(&mut self, queue: &Queue, device: &Device, surface: &Surface) {
-        // writing the buffers with stored vertices
+    pub fn present_scene(
+        &mut self,
+        queue: &Queue,
+        device: &Device,
+        surface: &Surface,
+        msaa: &Texture,
+    ) {
+        // Check primitive usage
+        let draw_circles = self.circles.borrow().is_in_use();
+        let draw_thin_lines = self.thin_lines.borrow().is_in_use();
+        let draw_arrows = self.arrows.borrow().is_in_use();
+
+        // Populate buffers if primitive has been drawn
+        if draw_circles {
+            self.circles.get_mut().populate_buffers(queue);
+        }
+        if draw_thin_lines {
+            self.thin_lines.get_mut().populate_buffers(queue);
+        }
+        if draw_arrows {
+            self.arrows.get_mut().populate_buffers(queue);
+        }
 
         self.write_camera_buffer(queue);
 
@@ -115,13 +112,15 @@ where
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        let msaa_view = msaa.create_view(&wgpu::TextureViewDescriptor::default());
+
         // Render pass
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
+                    view: &msaa_view,
+                    resolve_target: Some(&view),
                     ops: wgpu::Operations {
                         store: wgpu::StoreOp::Store,
                         load: wgpu::LoadOp::Clear(crate::CLEAR_COLOR),
@@ -135,21 +134,42 @@ where
             // Set the camera bind group
             render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
-            // Draw the Lines
-            // render_pass.set_pipeline(self.pipeline(PipelineType::ZeroWidthLines));
+            if draw_circles {
+                info!("Drawing circles");
+                render_pass.set_pipeline(self.pipeline(PipelineType::CircleFill));
 
-            // render_pass.set_vertex_buffer(0, self.line_vb.slice(..));
-            // render_pass.set_index_buffer(self.line_ib.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.set_vertex_buffer(0, self.circles.borrow().vb().slice(..));
+                render_pass.set_index_buffer(
+                    self.circles.borrow().ib().slice(..),
+                    wgpu::IndexFormat::Uint16,
+                );
 
-            // render_pass.draw_indexed(0..line_indicies, 0, 0..1);
+                render_pass.draw_indexed(0..self.circles.borrow().num_indicies(), 0, 0..1);
+            }
+            if draw_thin_lines {
+                info!("Drawing lines");
+                render_pass.set_pipeline(self.pipeline(PipelineType::ZeroWidthLines));
 
-            // // Draw the Circles
-            // render_pass.set_pipeline(self.pipeline(PipelineType::CircleFill));
+                render_pass.set_vertex_buffer(0, self.thin_lines.borrow().vb().slice(..));
+                render_pass.set_index_buffer(
+                    self.thin_lines.borrow().ib().slice(..),
+                    wgpu::IndexFormat::Uint16,
+                );
 
-            // render_pass.set_vertex_buffer(0, self.circle_vb.slice(..));
-            // render_pass.set_index_buffer(self.circle_ib.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.thin_lines.borrow().num_indicies(), 0, 0..1);
+            }
+            if draw_arrows {
+                info!("Drawing arrows");
+                render_pass.set_pipeline(self.pipeline(PipelineType::PolygonFill));
 
-            // render_pass.draw_indexed(0..circle_indicies, 0, 0..1);
+                render_pass.set_vertex_buffer(0, self.arrows.borrow().vb().slice(..));
+                render_pass.set_index_buffer(
+                    self.arrows.borrow().ib().slice(..),
+                    wgpu::IndexFormat::Uint16,
+                );
+
+                render_pass.draw_indexed(0..self.arrows.borrow().num_indicies(), 0, 0..1);
+            }
         }
 
         queue.submit(std::iter::once(encoder.finish()));
@@ -189,14 +209,19 @@ where
 // PRIMITIVES
 //
 
-pub struct Primitive<V: Vertex + Sized> {
+pub struct DrawPrimitive<V: Vertex + Sized + bytemuck::Pod> {
     vertices: Vec<V>,
     indicies: Vec<u16>,
     ib: Buffer,
     vb: Buffer,
+
+    num_indicies: u32,
 }
 
-impl<T: Vertex + Sized> Primitive<T> {
+impl<T> DrawPrimitive<T>
+where
+    T: Vertex + Sized + bytemuck::Pod + Debug,
+{
     fn new(device: &Device, num_verts: usize, num_ind: usize, max_prim: usize) -> Self {
         let vb = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
@@ -216,22 +241,65 @@ impl<T: Vertex + Sized> Primitive<T> {
             vertices: Default::default(),
             indicies: Default::default(),
 
-            ib,
             vb,
+            ib,
+
+            num_indicies: 0,
         }
     }
-    pub fn add_vertices(&mut self, vertices: &[T]) {
+
+    /// Appends the vertices and indicies of a primitive to the vertex and index vectors
+    pub fn add_primitive(&mut self, vertices: &[T], indicies: &[u16]) {
+        self.add_indicies(indicies);
+        self.add_vertices(vertices);
+    }
+    fn add_vertices(&mut self, vertices: &[T]) {
         self.vertices.extend(vertices.iter());
     }
-    pub fn add_indicies(&mut self, indicies: &[u16]) {
+    fn add_indicies(&mut self, indicies: &[u16]) {
         let num_vertices = self.vertices.len() as u16;
         self.indicies
             .extend(indicies.iter().map(|i| i + num_vertices));
     }
 
-    pub fn add_primitive(&mut self, vertices: &[T], indicies: &[u16]) {
-        self.add_indicies(indicies);
-        self.add_vertices(vertices);
+    pub fn populate_buffers(&mut self, queue: &Queue) {
+        let num_vertices = self.vertices.len();
+        let num_indicies = self.indicies.len();
+
+        dbg!(&self.vertices);
+        dbg!(&self.indicies);
+
+        let vb_bytes_size = (num_vertices * size_of::<T>()) as u64;
+        let vb_bytes_parity = vb_bytes_size % COPY_BUFFER_ALIGNMENT;
+
+        let ib_bytes_size = (num_indicies * size_of::<u16>()) as u64;
+        let ib_bytes_parity = ib_bytes_size % COPY_BUFFER_ALIGNMENT;
+
+        let mut vb_bytes = bytemuck::cast_slice::<T, u8>(&self.vertices).to_vec();
+        let mut ib_bytes = bytemuck::cast_slice::<u16, u8>(&self.indicies).to_vec();
+
+        (0..vb_bytes_parity).for_each(|_| vb_bytes.push(0));
+        (0..ib_bytes_parity).for_each(|_| ib_bytes.push(0));
+
+        println!("creating vb_view");
+        let mut vb_view = queue.write_buffer_with(&self.vb, 0, unsafe {
+            BufferSize::new_unchecked(vb_bytes_size + vb_bytes_parity)
+        });
+        println!("creating ib_view");
+        let mut ib_view = queue.write_buffer_with(&self.ib, 0, unsafe {
+            BufferSize::new_unchecked(ib_bytes_size + ib_bytes_parity)
+        });
+
+        println!("writing vb_view");
+        vb_view.unwrap().as_mut().copy_from_slice(&vb_bytes);
+
+        println!("writing ib_view");
+        ib_view.unwrap().as_mut().copy_from_slice(&ib_bytes);
+
+        self.num_indicies = self.indicies.len() as u32;
+
+        self.vertices.clear();
+        self.indicies.clear();
     }
 
     pub fn ib(&self) -> &Buffer {
@@ -240,18 +308,28 @@ impl<T: Vertex + Sized> Primitive<T> {
     pub fn vb(&self) -> &Buffer {
         &self.vb
     }
+
+    /// Returns whether the given primitive has been drawn
+    #[inline]
+    pub fn is_in_use(&self) -> bool {
+        !self.vertices.is_empty()
+    }
+
+    pub fn num_indicies(&self) -> u32 {
+        self.num_indicies
+    }
 }
 
-mod shapes {
+pub mod shapes {
     use std::borrow::BorrowMut;
 
-    use cgmath::{vec3, vec4, Angle, Rad};
+    use cgmath::{vec3, vec4, Angle, Deg, Matrix2, Rad, Rotation2};
 
     use crate::camera::Camera2D;
 
     use super::*;
 
-    /// Draws a circle at a given position with a given radius and color
+    /// Draws a 2D circle
     pub fn draw_circle_2d(
         render_context: &RenderContext<Camera2D>,
         p: Vector2<f32>,
@@ -281,14 +359,15 @@ mod shapes {
             .add_primitive(&vertices, &indicies);
     }
 
+    /// Curries the [`draw_arrow_2d`] function to reduce the amount of arguments for repeditive use
     pub fn construct_arrow_2d(
         render_context: &RenderContext<Camera2D>,
         length: f32,
         line_thickness: f32,
         point_length: f32,
         point_width: f32,
-    ) -> impl Fn(Vector2<f32>, Rad<f32>) + '_ {
-        |p: Vector2<f32>, dir: Rad<f32>| move {
+    ) -> impl Fn(Vector2<f32>, Deg<f32>, Vector4<f32>) + '_ {
+        move |p, dir, color| {
             draw_arrow_2d(
                 render_context,
                 p,
@@ -297,20 +376,74 @@ mod shapes {
                 line_thickness,
                 point_length,
                 point_width,
-            );
+                color,
+            )
         }
     }
 
-    ///
+    /// Draws a 2D arrow
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_arrow_2d(
         render_context: &RenderContext<Camera2D>,
         p: Vector2<f32>,
-        dir: Rad<f32>,
+        dir: Deg<f32>,
         length: f32,
         line_thickness: f32,
         point_length: f32,
         point_width: f32,
+        color: Vector4<f32>,
     ) {
+        let line_hw = line_thickness / 2.0;
+        let line_length = length - point_length;
+        let point_hw = point_width / 2.0;
+
+        let line_bl = (rotate(vec2(0.0, -line_hw), dir) + p)
+            .extend(0.0)
+            .extend(1.0);
+        let line_br = (rotate(vec2(line_length, -line_hw), dir) + p)
+            .extend(0.0)
+            .extend(1.0);
+        let line_tr = (rotate(vec2(line_length, line_hw), dir) + p)
+            .extend(0.0)
+            .extend(1.0);
+        let line_tl = (rotate(vec2(0.0, line_hw), dir) + p)
+            .extend(0.0)
+            .extend(1.0);
+
+        let point_bottom = (rotate(vec2(line_length, -point_width), dir) + p)
+            .extend(0.0)
+            .extend(1.0);
+        let point_tip = (rotate(vec2(length, 0.0), dir) + p).extend(0.0).extend(1.0);
+        let point_top = (rotate(vec2(line_length, point_width), dir) + p)
+            .extend(0.0)
+            .extend(1.0);
+
+        let c: [f32; 4] = color.into();
+
+        #[rustfmt::skip]
+        let vertices = [
+            ArrowVertex { p: line_bl.into()     , c},
+            ArrowVertex { p: line_br.into()     , c},
+            ArrowVertex { p: line_tr.into()     , c},
+            ArrowVertex { p: line_tl.into()     , c},
+            ArrowVertex { p: point_bottom.into(), c},
+            ArrowVertex { p: point_tip.into()   , c},
+            ArrowVertex { p: point_top.into()   , c}
+        ];
+
+        let indicies = [0, 1, 2, 2, 3, 0, 4, 5, 6];
+
+        render_context
+            .arrows
+            .borrow_mut()
+            .add_primitive(&vertices, &indicies);
+    }
+
+    fn rotate(vec: Vector2<f32>, angle: Deg<f32>) -> Vector2<f32> {
+        let (sin, cos) = angle.sin_cos();
+        let rot_mat = Matrix2::new(cos, -sin, sin, cos);
+
+        rot_mat * vec
     }
 }
 
@@ -353,13 +486,11 @@ impl Vertex for LineVertex {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ArrowVertex {
-    pub position: [f32; 4],
-    pub color: [f32; 4],
-    pub frag_coord: [f32; 2],
+    pub p: [f32; 4],
+    pub c: [f32; 4],
 }
 impl Vertex for ArrowVertex {
-    const ATTRIBS: &'static [VertexAttribute] =
-        &vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x2];
+    const ATTRIBS: &'static [VertexAttribute] = &vertex_attr_array![0 => Float32x4, 1 => Float32x4];
 }
 
 //

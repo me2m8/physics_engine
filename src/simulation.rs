@@ -1,8 +1,6 @@
-use std::{f32::consts::TAU, thread::spawn};
+use std::f32::consts::TAU;
 
-use crate::render_context::CircleVertex;
-
-use cgmath::{vec2, InnerSpace, MetricSpace, Vector2, Zero};
+use cgmath::{vec2, Deg, InnerSpace, Vector2, Zero};
 use itertools::Itertools;
 
 const TIMESTEP: f32 = 1.0 / 60.0;
@@ -10,7 +8,7 @@ const MIN_DST: f32 = 0.1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Particle {
-    position: Vector2<f32>,
+    pub position: Vector2<f32>,
     velocity: Vector2<f32>,
     acceleration: Vector2<f32>,
     mass: f32,
@@ -36,6 +34,7 @@ impl Particle {
 
 pub struct Simulation {
     pub bodies: Vec<Particle>,
+    pub arrow_dir: Deg<f32>,
 }
 
 impl Simulation {
@@ -59,7 +58,7 @@ impl Simulation {
             bodies[i].velocity *= v;
         });
 
-        Simulation { bodies }
+        Simulation { bodies, arrow_dir: Deg(0.0) }
     }
 
     pub fn update(&mut self) {
@@ -78,6 +77,8 @@ impl Simulation {
         for i in 0..n {
             self.bodies[i].update(TIMESTEP);
         }
+
+        self.arrow_dir += Deg(1.0);
     }
 
     pub fn calculate_acc_at(&self, pos: Vector2<f32>) -> Vector2<f32> {
@@ -94,23 +95,4 @@ impl Simulation {
 
         acc
     }
-}
-
-pub fn draw_body(body: Particle, radius: f32) -> [CircleVertex; 4] {
-    let center: Vector2<f32> = body.position;
-    let rad = Vector2::new(radius, -radius);
-
-    let bl: Vector2<f32> = center - rad.xx();
-    let br: Vector2<f32> = center - rad.yx();
-    let tr: Vector2<f32> = center + rad.xx();
-    let tl: Vector2<f32> = center + rad.yx();
-
-    let color = [1.0, 1.0, 1.0, 1.0];
-
-    [
-        CircleVertex::new(bl, color, [-1.0, -1.0]),
-        CircleVertex::new(br, color, [1.0, -1.0]),
-        CircleVertex::new(tr, color, [1.0, 1.0]),
-        CircleVertex::new(tl, color, [-1.0, 1.0]),
-    ]
 }

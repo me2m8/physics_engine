@@ -6,7 +6,7 @@ use wgpu::{
 
 use crate::{
     camera::{Camera, CameraState},
-    render_context::{LineVertex, CircleVertex},
+    render_context::{ArrowVertex, CircleVertex, LineVertex, Vertex}, SAMPLE_COUNT,
 };
 
 #[macro_export]
@@ -74,7 +74,7 @@ pub fn make_pipelines<T: Camera + Sized>(
             },
             multiview: None,
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: SAMPLE_COUNT,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
@@ -85,7 +85,7 @@ pub fn make_pipelines<T: Camera + Sized>(
                 module: shaders.get("polygon_fill.wgsl").unwrap(),
                 entry_point: "vs_main",
                 compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[CircleVertex::DESC],
+                buffers: &[ArrowVertex::DESC],
             },
             fragment: Some(FragmentState {
                 module: shaders.get("polygon_fill.wgsl").unwrap(),
@@ -116,7 +116,7 @@ pub fn make_pipelines<T: Camera + Sized>(
             },
             multiview: None,
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: SAMPLE_COUNT,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
@@ -158,7 +158,7 @@ pub fn make_pipelines<T: Camera + Sized>(
             },
             multiview: None,
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: SAMPLE_COUNT,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
@@ -200,7 +200,7 @@ pub fn make_pipelines<T: Camera + Sized>(
             },
             multiview: None,
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: SAMPLE_COUNT,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
