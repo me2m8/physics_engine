@@ -47,7 +47,7 @@ where
         let float_height = config.height as f32;
 
         // This scales the viewport such that the width becomes this amount in pixels
-        let viewport_scale = 200.0;
+        let viewport_scale = crate::VIEWPORT_SCALE;
 
         let viewport = vec2(float_width, float_height) / float_width * viewport_scale;
         let camera = CameraState::new(device, viewport);
@@ -265,9 +265,6 @@ where
     pub fn populate_buffers(&mut self, queue: &Queue) {
         let num_vertices = self.vertices.len();
         let num_indicies = self.indicies.len();
-
-        dbg!(&self.vertices);
-        dbg!(&self.indicies);
 
         let vb_bytes_size = (num_vertices * size_of::<T>()) as u64;
         let vb_bytes_parity = vb_bytes_size % COPY_BUFFER_ALIGNMENT;
