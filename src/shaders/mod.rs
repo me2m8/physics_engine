@@ -22,7 +22,7 @@ macro_rules! include_many_wgsl {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PipelineType {
-    PolygonFill,
+    Arrow2D,
     CircleFill,
     CircleFade,
     ZeroWidthLines,
@@ -36,7 +36,7 @@ pub fn make_pipelines<T: Camera + Sized>(
     use super::include_many_wgsl;
 
     let shader_descriptors = include_many_wgsl![
-        "polygon_fill.wgsl",
+        "arrow2d.wgsl",
         "circle_fill.wgsl",
         "circle_fade.wgsl",
         "zero_width_lines.wgsl"
@@ -60,9 +60,9 @@ pub fn make_pipelines<T: Camera + Sized>(
 
     // PolygonFill pipeline
     pipelines.insert(
-        PipelineType::PolygonFill,
+        PipelineType::Arrow2D,
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("FilledPolygon pipeline"),
+            label: Some("Arrow2d pipeline"),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
                 strip_index_format: None,
@@ -82,13 +82,13 @@ pub fn make_pipelines<T: Camera + Sized>(
             depth_stencil: None,
             cache: None,
             vertex: wgpu::VertexState {
-                module: shaders.get("polygon_fill.wgsl").unwrap(),
+                module: shaders.get("arrow2d.wgsl").unwrap(),
                 entry_point: "vs_main",
                 compilation_options: PipelineCompilationOptions::default(),
                 buffers: &[ArrowVertex::DESC],
             },
             fragment: Some(FragmentState {
-                module: shaders.get("polygon_fill.wgsl").unwrap(),
+                module: shaders.get("arrow2d.wgsl").unwrap(),
                 entry_point: "fs_main",
                 compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {

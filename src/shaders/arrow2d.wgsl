@@ -1,5 +1,9 @@
 struct QuadVertex {
     @location(0) position: vec4<f32>, 
+}
+
+struct Instance2D {
+    @location(0) transform: mat4x4<f32>,
     @location(1) color: vec4<f32>,
 }
 
@@ -16,12 +20,13 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(
-    in: QuadVertex
+    vertex: QuadVertex,
+    instance: Instance2D,
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    out.clip_position = camera.camera_matrix * in.position;
-    out.color = in.color;
+    out.clip_position = camera.camera_matrix * instance.transform * vertex.position;
+    out.color = instance.color;
 
     return out;
 }

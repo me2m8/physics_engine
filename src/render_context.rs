@@ -1,12 +1,11 @@
 #![allow(unused)]
 use core::num;
 use std::{
-    borrow::Cow, cell::RefCell, collections::HashMap, error::Error, fmt::Debug, num::NonZero,
+    borrow::{BorrowMut, Cow}, cell::RefCell, collections::HashMap, error::Error, fmt::Debug, num::NonZero,
 };
 
 use bytemuck::bytes_of;
 use cgmath::{vec2, Vector2, Vector3, Vector4};
-use image::Primitive;
 use itertools::Itertools;
 use log::info;
 use wgpu::{
@@ -20,6 +19,8 @@ use wgpu::{
 
 use crate::{
     camera::{Camera, Camera2D, CameraState},
+    instance::Instance2D,
+    primitives::{create_arrow_template, create_circle_primitive, Primitive},
     MAX_CIRCLES, SAMPLE_COUNT,
 };
 
@@ -33,9 +34,12 @@ where
     config: wgpu::SurfaceConfiguration,
     camera: CameraState<C>,
 
-    circles: RefCell<DrawPrimitive<CircleVertex>>,
-    thin_lines: RefCell<DrawPrimitive<LineVertex>>,
-    arrows: RefCell<DrawPrimitive<ArrowVertex>>,
+    vertex_buf: Buffer,
+    instance_buf: Buffer,
+    index_buf: Buffer,
+
+    circles: Primitive<CircleVertex, Instance2D>,
+    arrows: Primitive<ArrowVertex, Instance2D>,
 }
 
 impl<C> RenderContext<C>
@@ -46,7 +50,7 @@ where
         let float_width = config.width as f32;
         let float_height = config.height as f32;
 
-        // This scales the viewport such that the width becomes this amount in pixels
+        // This scales the viewport such that the width is this amount in pixels
         let viewport_scale = 200.0;
 
         let viewport = vec2(float_width, float_height) / float_width * viewport_scale;
@@ -54,24 +58,27 @@ where
 
         let pipelines = make_pipelines(device, config, &camera);
 
-        let circles = RefCell::new(DrawPrimitive::new(device, 4, 6, crate::MAX_CIRCLES));
-        let thin_lines = RefCell::new(DrawPrimitive::new(device, 2, 2, crate::MAX_LINES));
-        let arrows = RefCell::new(DrawPrimitive::new(device, 7, 9, crate::MAX_ARROWS));
+        let circles = Primitive::new(create_circle_primitive(5.0));
+        let arrows = Primitive::new(create_arrow_template(7.0, 2.0, 2.0, 2.0));
 
         Self {
             camera,
             pipelines,
             config: config.clone(),
 
+            vertex_buf,
+            instance_buf,
+            index_buf,
+
             circles,
-            thin_lines,
             arrows,
         }
     }
 
     /// This function currently does nothing and just panics
     pub fn begin_scene(&mut self, queue: &Queue) {
-        panic!("Currently does nothing")
+        self.circles().clear_instances();
+        self.arrows().clear_instances();
     }
 
     pub fn present_scene(
@@ -81,26 +88,6 @@ where
         surface: &Surface,
         msaa: &Texture,
     ) {
-        // Check primitive usage
-        let draw_circles = self.circles.borrow().is_in_use();
-        let draw_thin_lines = self.thin_lines.borrow().is_in_use();
-        let draw_arrows = self.arrows.borrow().is_in_use();
-
-        // Populate buffers if primitive has been drawn
-        if draw_circles {
-            self.circles.get_mut().populate_buffers(queue);
-        }
-        if draw_thin_lines {
-            self.thin_lines.get_mut().populate_buffers(queue);
-        }
-        if draw_arrows {
-            self.arrows.get_mut().populate_buffers(queue);
-        }
-
-        self.write_camera_buffer(queue);
-
-        queue.submit([]);
-
         // Creating command encoder for sending commands to the gpu
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Command Encoder"),
@@ -133,42 +120,26 @@ where
 
             // Set the camera bind group
             render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
+            render_pass.set_index_buffer(self.index_buf.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buf.slice(..));
 
-            if draw_circles {
-                info!("Drawing circles");
-                render_pass.set_pipeline(self.pipeline(PipelineType::CircleFill));
+            // Write arrow Buffers and draws arrows
+            if self.arrows().has_instances() {
+                let mut ind_bv = queue.write_buffer_with(&self.index_buf, 0, self.arrows().index_buffer_len()).unwrap();
+                let mut vert_bv = queue.write_buffer_with(&self.vertex_buf, 0, self.arrows().vertex_buffer_len()).unwrap();
+                let mut inst_bv = queue.write_buffer_with(&self.instance_buf, 0, self.arrows().instance_buffer_len()).unwrap();
 
-                render_pass.set_vertex_buffer(0, self.circles.borrow().vb().slice(..));
-                render_pass.set_index_buffer(
-                    self.circles.borrow().ib().slice(..),
-                    wgpu::IndexFormat::Uint16,
-                );
+                ind_bv.borrow_mut().copy_from_slice(bytemuck::cast_slice(self.arrows().indicies()));
+                vert_bv.borrow_mut().copy_from_slice(bytemuck::cast_slice(self.arrows().vertices()));
+                inst_bv.borrow_mut().copy_from_slice(bytemuck::cast_slice(&self.arrows().instances_raw()));
 
-                render_pass.draw_indexed(0..self.circles.borrow().num_indicies(), 0, 0..1);
-            }
-            if draw_thin_lines {
-                info!("Drawing lines");
-                render_pass.set_pipeline(self.pipeline(PipelineType::ZeroWidthLines));
+                drop((ind_bv, vert_bv, inst_bv));
 
-                render_pass.set_vertex_buffer(0, self.thin_lines.borrow().vb().slice(..));
-                render_pass.set_index_buffer(
-                    self.thin_lines.borrow().ib().slice(..),
-                    wgpu::IndexFormat::Uint16,
-                );
+                queue.submit([]);
 
-                render_pass.draw_indexed(0..self.thin_lines.borrow().num_indicies(), 0, 0..1);
-            }
-            if draw_arrows {
-                info!("Drawing arrows");
-                render_pass.set_pipeline(self.pipeline(PipelineType::PolygonFill));
-
-                render_pass.set_vertex_buffer(0, self.arrows.borrow().vb().slice(..));
-                render_pass.set_index_buffer(
-                    self.arrows.borrow().ib().slice(..),
-                    wgpu::IndexFormat::Uint16,
-                );
-
-                render_pass.draw_indexed(0..self.arrows.borrow().num_indicies(), 0, 0..1);
+                render_pass.set_pipeline(self.pipeline(PipelineType::Arrow2D));
+                render_pass.draw_indexed(0..self.arrows().num_indicies(), 0, 0..self.arrows().num_instances());
             }
         }
 
@@ -190,11 +161,9 @@ where
             .as_mut()
             .copy_from_slice(bytemuck::cast_slice(&[self.camera().to_raw()]));
     }
-
     pub fn pipeline(&self, pipeline_type: PipelineType) -> &RenderPipeline {
         self.pipelines.get(&pipeline_type).unwrap()
     }
-
     pub fn camera(&self) -> &CameraState<C> {
         &self.camera
     }
@@ -203,120 +172,13 @@ where
     pub fn viewport_size(&self) -> Vector2<f32> {
         self.camera.viewport_size()
     }
-}
 
-//
-// PRIMITIVES
-//
-
-pub struct DrawPrimitive<V: Vertex + Sized + bytemuck::Pod> {
-    vertices: Vec<V>,
-    indicies: Vec<u16>,
-    ib: Buffer,
-    vb: Buffer,
-
-    num_indicies: u32,
-}
-
-impl<T> DrawPrimitive<T>
-where
-    T: Vertex + Sized + bytemuck::Pod + Debug,
-{
-    fn new(device: &Device, num_verts: usize, num_ind: usize, max_prim: usize) -> Self {
-        let vb = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Vertex Buffer"),
-            size: (size_of::<T>() * max_prim * num_verts) as u64,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let ib = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Index Buffer"),
-            size: (size_of::<u16>() * max_prim * num_ind) as u64,
-            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        Self {
-            vertices: Default::default(),
-            indicies: Default::default(),
-
-            vb,
-            ib,
-
-            num_indicies: 0,
-        }
+    pub fn arrows(&self) -> &Primitive<ArrowVertex, Instance2D> {
+        &self.arrows
     }
 
-    /// Appends the vertices and indicies of a primitive to the vertex and index vectors
-    pub fn add_primitive(&mut self, vertices: &[T], indicies: &[u16]) {
-        self.add_indicies(indicies);
-        self.add_vertices(vertices);
-    }
-    fn add_vertices(&mut self, vertices: &[T]) {
-        self.vertices.extend(vertices.iter());
-    }
-    fn add_indicies(&mut self, indicies: &[u16]) {
-        let num_vertices = self.vertices.len() as u16;
-        self.indicies
-            .extend(indicies.iter().map(|i| i + num_vertices));
-    }
-
-    pub fn populate_buffers(&mut self, queue: &Queue) {
-        let num_vertices = self.vertices.len();
-        let num_indicies = self.indicies.len();
-
-        dbg!(&self.vertices);
-        dbg!(&self.indicies);
-
-        let vb_bytes_size = (num_vertices * size_of::<T>()) as u64;
-        let vb_bytes_parity = vb_bytes_size % COPY_BUFFER_ALIGNMENT;
-
-        let ib_bytes_size = (num_indicies * size_of::<u16>()) as u64;
-        let ib_bytes_parity = ib_bytes_size % COPY_BUFFER_ALIGNMENT;
-
-        let mut vb_bytes = bytemuck::cast_slice::<T, u8>(&self.vertices).to_vec();
-        let mut ib_bytes = bytemuck::cast_slice::<u16, u8>(&self.indicies).to_vec();
-
-        (0..vb_bytes_parity).for_each(|_| vb_bytes.push(0));
-        (0..ib_bytes_parity).for_each(|_| ib_bytes.push(0));
-
-        println!("creating vb_view");
-        let mut vb_view = queue.write_buffer_with(&self.vb, 0, unsafe {
-            BufferSize::new_unchecked(vb_bytes_size + vb_bytes_parity)
-        });
-        println!("creating ib_view");
-        let mut ib_view = queue.write_buffer_with(&self.ib, 0, unsafe {
-            BufferSize::new_unchecked(ib_bytes_size + ib_bytes_parity)
-        });
-
-        println!("writing vb_view");
-        vb_view.unwrap().as_mut().copy_from_slice(&vb_bytes);
-
-        println!("writing ib_view");
-        ib_view.unwrap().as_mut().copy_from_slice(&ib_bytes);
-
-        self.num_indicies = self.indicies.len() as u32;
-
-        self.vertices.clear();
-        self.indicies.clear();
-    }
-
-    pub fn ib(&self) -> &Buffer {
-        &self.ib
-    }
-    pub fn vb(&self) -> &Buffer {
-        &self.vb
-    }
-
-    /// Returns whether the given primitive has been drawn
-    #[inline]
-    pub fn is_in_use(&self) -> bool {
-        !self.vertices.is_empty()
-    }
-
-    pub fn num_indicies(&self) -> u32 {
-        self.num_indicies
+    pub fn circles(&self) -> &Primitive<CircleVertex, Instance2D> {
+        &self.circles
     }
 }
 
@@ -358,93 +220,51 @@ pub mod shapes {
             .borrow_mut()
             .add_primitive(&vertices, &indicies);
     }
+}
 
-    /// Curries the [`draw_arrow_2d`] function to reduce the amount of arguments for repeditive use
-    pub fn construct_arrow_2d(
-        render_context: &RenderContext<Camera2D>,
-        length: f32,
-        line_thickness: f32,
-        point_length: f32,
-        point_width: f32,
-    ) -> impl Fn(Vector2<f32>, Deg<f32>, Vector4<f32>) + '_ {
-        move |p, dir, color| {
-            draw_arrow_2d(
-                render_context,
-                p,
-                dir,
-                length,
-                line_thickness,
-                point_length,
-                point_width,
-                color,
-            )
+pub struct BufferMaster {
+    index_buf: Buffer,
+    vertex_buf: Buffer,
+    instance_buf: Buffer,
+
+    index_offset: u64,
+    vertex_offset: u64,
+    instance_offset: u64,
+}
+
+impl BufferMaster {
+    pub fn new(device: &Device) -> Self {
+        let index_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Index Buffer"),
+            size: crate::INDEX_BUF_SIZE,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vertex Buffer"),
+            size: crate::VERT_BUF_SIZE,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer"),
+            size: crate::INST_BUF_SIZE,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            index_buf,
+            vertex_buf,
+            instance_buf,
+
+            index_offset: 0,
+            vertex_offset: 0,
+            instance_offset: 0,
         }
     }
 
-    /// Draws a 2D arrow
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_arrow_2d(
-        render_context: &RenderContext<Camera2D>,
-        p: Vector2<f32>,
-        dir: Deg<f32>,
-        length: f32,
-        line_thickness: f32,
-        point_length: f32,
-        point_width: f32,
-        color: Vector4<f32>,
-    ) {
-        let line_hw = line_thickness / 2.0;
-        let line_length = length - point_length;
-        let point_hw = point_width / 2.0;
-
-        let line_bl = (rotate(vec2(0.0, -line_hw), dir) + p)
-            .extend(0.0)
-            .extend(1.0);
-        let line_br = (rotate(vec2(line_length, -line_hw), dir) + p)
-            .extend(0.0)
-            .extend(1.0);
-        let line_tr = (rotate(vec2(line_length, line_hw), dir) + p)
-            .extend(0.0)
-            .extend(1.0);
-        let line_tl = (rotate(vec2(0.0, line_hw), dir) + p)
-            .extend(0.0)
-            .extend(1.0);
-
-        let point_bottom = (rotate(vec2(line_length, -point_width), dir) + p)
-            .extend(0.0)
-            .extend(1.0);
-        let point_tip = (rotate(vec2(length, 0.0), dir) + p).extend(0.0).extend(1.0);
-        let point_top = (rotate(vec2(line_length, point_width), dir) + p)
-            .extend(0.0)
-            .extend(1.0);
-
-        let c: [f32; 4] = color.into();
-
-        #[rustfmt::skip]
-        let vertices = [
-            ArrowVertex { p: line_bl.into()     , c},
-            ArrowVertex { p: line_br.into()     , c},
-            ArrowVertex { p: line_tr.into()     , c},
-            ArrowVertex { p: line_tl.into()     , c},
-            ArrowVertex { p: point_bottom.into(), c},
-            ArrowVertex { p: point_tip.into()   , c},
-            ArrowVertex { p: point_top.into()   , c}
-        ];
-
-        let indicies = [0, 1, 2, 2, 3, 0, 4, 5, 6];
-
-        render_context
-            .arrows
-            .borrow_mut()
-            .add_primitive(&vertices, &indicies);
-    }
-
-    fn rotate(vec: Vector2<f32>, angle: Deg<f32>) -> Vector2<f32> {
-        let (sin, cos) = angle.sin_cos();
-        let rot_mat = Matrix2::new(cos, -sin, sin, cos);
-
-        rot_mat * vec
-    }
+    pub fn 
 }
 
 //
@@ -496,37 +316,6 @@ impl Vertex for ArrowVertex {
 //
 // INSTANCES
 //
-
-pub struct RawInstance {
-    transform: cgmath::Matrix4<f32>,
-    color: Vector4<f32>,
-}
-
-pub struct Instance {
-    position: Vector3<f32>,
-    pitch: f32,
-    yaw: f32,
-    roll: f32,
-    x_scale: f32,
-    y_scale: f32,
-    color: Vector4<f32>,
-}
-
-impl Instance {
-    const ATTRIBS: &'static [VertexAttribute] = &vertex_attr_array![
-        0 => Float32x4, // Matrix4x4
-        1 => Float32x4, // Matrix4x4
-        2 => Float32x4, // Matrix4x4
-        3 => Float32x4, // Matrix4x4
-        4 => Float32x4, // Color
-    ];
-
-    const DESC: VertexBufferLayout<'static> = VertexBufferLayout {
-        array_stride: std::mem::size_of::<RawInstance>() as BufferAddress,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: Self::ATTRIBS,
-    };
-}
 
 //
 // Index Generating Functions
