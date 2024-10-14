@@ -1,4 +1,4 @@
-use cgmath::{vec2, vec4, Deg, Rad, Vector2, Zero};
+use cgmath::{vec2, vec4, Deg, InnerSpace, Rad, Vector2, Zero};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
@@ -264,7 +264,6 @@ impl ApplicationHandler for Application {
             // WindowEvent::MouseInput { device_id, state, button } => todo!(),
             WindowEvent::RedrawRequested => {
                 window.simulation.update();
-                dbg!(&window.simulation.bodies[0]);
                 window.draw();
             }
             _ => {}
@@ -419,7 +418,7 @@ impl WindowState {
         };
 
         let renderer = RenderContext::<CameraType>::new(&device, &config);
-        let simulation = Simulation::new(500);
+        let simulation = Simulation::new(5);
 
         let msaa = Self::create_msaa_texture(&device, &config);
 
@@ -473,20 +472,53 @@ impl WindowState {
     pub fn draw(&mut self) {
         let b4 = std::time::Instant::now();
 
-        // self.simulation.bodies.iter().for_each(|b| {
-        //     draw_circle_2d(&self.renderer, b.position, 1.0, vec4(1.0, 1.0, 1.0, 1.0))
-        // });
+        // draw_arrow_2d(
+        //     &self.renderer,
+        //     vec2(0., 0.),
+        //     self.simulation.arrow_dir,
+        //     5.0,
+        //     0.5,
+        //     1.0,
+        //     1.0,
+        //     vec4(1.0, 0.0, 0.0, 1.0),
+        // );
 
-        draw_arrow_2d(
-            &self.renderer,
-            vec2(0., 0.),
-            self.simulation.arrow_dir,
-            5.0,
-            0.5,
-            1.0,
-            1.0,
-            vec4(1.0, 0.0, 0.0, 1.0),
-        );
+        let vp_size = self.renderer.viewport_size();
+
+        let grid_size_x = 30;
+        let grid_size_y = 25;
+        (0..grid_size_x)
+            .cartesian_product(0..grid_size_y)
+            .for_each(|(i, j)| {
+                let i: isize = i - (grid_size_x / 2);
+                let j: isize = j - (grid_size_y / 2);
+
+                let pos = vec2(
+                    vp_size.x * 2.0 * i as f32 / grid_size_x as f32,
+                    vp_size.y * 2.0 * j as f32 / grid_size_y as f32,
+                );
+
+                let acc = self.simulation.calculate_acc_at(pos);
+
+                draw_arrow_2d(
+                    &self.renderer,
+                    pos,
+                    acc.angle(Vector2::unit_x()).into(),
+                    5.0,
+                    0.5,
+                    1.0,
+                    1.0,
+                    vec4(1.0, 0.0, 0.0, 1.0),
+                );
+            });
+
+        self.simulation.bodies.iter().for_each(|b| {
+            draw_circle_2d(&self.renderer, b.position, 1.0, vec4(1.0, 1.0, 1.0, 1.0))
+        });
+
+        self.simulation.attractors.iter().for_each(|b| {
+            draw_circle_2d(&self.renderer, b.position, 4.0, vec4(1.0, 1.0, 1.0, 1.0))
+        });
 
         self.renderer
             .present_scene(&self.queue, &self.device, &self.surface, &self.msaa);

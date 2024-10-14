@@ -50,8 +50,8 @@ where
         let float_width = config.width as f32;
         let float_height = config.height as f32;
 
-        // This scales the viewport such that the width is this amount in pixels
-        let viewport_scale = 200.0;
+        // This scales the viewport such that the width becomes this amount in pixels
+        let viewport_scale = crate::VIEWPORT_SCALE;
 
         let viewport = vec2(float_width, float_height) / float_width * viewport_scale;
         let camera = CameraState::new(device, viewport);
