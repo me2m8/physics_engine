@@ -1,7 +1,12 @@
 #![allow(unused)]
 use core::num;
 use std::{
-    borrow::{BorrowMut, Cow}, cell::RefCell, collections::HashMap, error::Error, fmt::Debug, num::NonZero,
+    borrow::{BorrowMut, Cow},
+    cell::RefCell,
+    collections::HashMap,
+    error::Error,
+    fmt::Debug,
+    num::NonZero,
 };
 
 use bytemuck::bytes_of;
@@ -19,7 +24,8 @@ use wgpu::{
 
 use crate::{
     camera::{Camera, Camera2D, CameraState},
-    instance::Instance2D,
+    error::PrimitiveError,
+    instance::{Instance, Instance2D},
     primitives::{create_arrow_template, create_circle_primitive, Primitive},
     MAX_CIRCLES, SAMPLE_COUNT,
 };
@@ -34,9 +40,7 @@ where
     config: wgpu::SurfaceConfiguration,
     camera: CameraState<C>,
 
-    vertex_buf: Buffer,
-    instance_buf: Buffer,
-    index_buf: Buffer,
+    buffers: BufferMaster,
 
     circles: Primitive<CircleVertex, Instance2D>,
     arrows: Primitive<ArrowVertex, Instance2D>,
@@ -61,21 +65,20 @@ where
         let circles = Primitive::new(create_circle_primitive(5.0));
         let arrows = Primitive::new(create_arrow_template(7.0, 2.0, 2.0, 2.0));
 
+        let buffers = BufferMaster::new(device);
+
         Self {
             camera,
             pipelines,
             config: config.clone(),
 
-            vertex_buf,
-            instance_buf,
-            index_buf,
+            buffers,
 
             circles,
             arrows,
         }
     }
 
-    /// This function currently does nothing and just panics
     pub fn begin_scene(&mut self, queue: &Queue) {
         self.circles().clear_instances();
         self.arrows().clear_instances();
@@ -99,7 +102,19 @@ where
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Create view for multisampling
         let msaa_view = msaa.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Write data to buffers
+        self.buffers.reset();
+        if self.arrows().has_instances() {
+            self.buffers.add_primitives(queue, &self.arrows);
+        }
+        if self.circles().has_instances() {
+            self.buffers.add_primitives(queue, &self.circles);
+        }
+
+        queue.submit([]);
 
         // Render pass
         {
@@ -120,26 +135,27 @@ where
 
             // Set the camera bind group
             render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
-            render_pass.set_index_buffer(self.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buf.slice(..));
+            render_pass.set_vertex_buffer(0, self.buffers.vertex_buf.slice(..));
+            render_pass.set_vertex_buffer(1, self.buffers.instance_buf.slice(..));
+            render_pass
+                .set_index_buffer(self.buffers.index_buf.slice(..), wgpu::IndexFormat::Uint16);
 
-            // Write arrow Buffers and draws arrows
-            if self.arrows().has_instances() {
-                let mut ind_bv = queue.write_buffer_with(&self.index_buf, 0, self.arrows().index_buffer_len()).unwrap();
-                let mut vert_bv = queue.write_buffer_with(&self.vertex_buf, 0, self.arrows().vertex_buffer_len()).unwrap();
-                let mut inst_bv = queue.write_buffer_with(&self.instance_buf, 0, self.arrows().instance_buffer_len()).unwrap();
+            for i in 0..self.buffers.primitive_count as usize {
+                // Get offsets start and end
+                let offsets = &self.buffers.offsets;
+                let start = offsets[i];
+                let end = offsets.get(i + 1).unwrap_or(&self.buffers.end_offsets);
 
-                ind_bv.borrow_mut().copy_from_slice(bytemuck::cast_slice(self.arrows().indicies()));
-                vert_bv.borrow_mut().copy_from_slice(bytemuck::cast_slice(self.arrows().vertices()));
-                inst_bv.borrow_mut().copy_from_slice(bytemuck::cast_slice(&self.arrows().instances_raw()));
+                // Set the correct pipeline
+                let pipeline = self.pipeline(self.buffers.pipelines[i]);
+                render_pass.set_pipeline(pipeline);
 
-                drop((ind_bv, vert_bv, inst_bv));
-
-                queue.submit([]);
-
-                render_pass.set_pipeline(self.pipeline(PipelineType::Arrow2D));
-                render_pass.draw_indexed(0..self.arrows().num_indicies(), 0, 0..self.arrows().num_instances());
+                // Draw each primitive
+                render_pass.draw_indexed(
+                    start.index_offset..end.index_offset,
+                    start.vertex_offset as i32,
+                    start.instance_offset..end.instance_offset,
+                );
             }
         }
 
@@ -176,7 +192,6 @@ where
     pub fn arrows(&self) -> &Primitive<ArrowVertex, Instance2D> {
         &self.arrows
     }
-
     pub fn circles(&self) -> &Primitive<CircleVertex, Instance2D> {
         &self.circles
     }
@@ -214,22 +229,28 @@ pub mod shapes {
             CircleVertex { p: tl.into(), c: color.into(), fc: [ 1., -1.]},
         ];
         let indicies = [0, 1, 2, 2, 3, 0];
-
-        render_context
-            .circles
-            .borrow_mut()
-            .add_primitive(&vertices, &indicies);
     }
 }
 
+/// Keeps track of the buffers and their contents
 pub struct BufferMaster {
     index_buf: Buffer,
     vertex_buf: Buffer,
     instance_buf: Buffer,
 
-    index_offset: u64,
-    vertex_offset: u64,
-    instance_offset: u64,
+    pipelines: Vec<PipelineType>,
+    offsets: Vec<BufferOffsets>,
+    end_offsets: BufferOffsets,
+
+    primitive_count: u64,
+}
+
+/// Organizes the offsets for the buffer master
+#[derive(Clone, Copy, Debug, Default)]
+struct BufferOffsets {
+    index_offset: u32,
+    vertex_offset: u32,
+    instance_offset: u32,
 }
 
 impl BufferMaster {
@@ -258,13 +279,70 @@ impl BufferMaster {
             vertex_buf,
             instance_buf,
 
-            index_offset: 0,
-            vertex_offset: 0,
-            instance_offset: 0,
+            pipelines: Default::default(),
+            offsets: Default::default(),
+            end_offsets: Default::default(),
+
+            primitive_count: 0,
         }
     }
 
-    pub fn 
+    pub fn add_primitives<V, I>(
+        &mut self,
+        queue: &Queue,
+        primitives: &Primitive<V, I>,
+    ) -> Result<(), Box<dyn Error>>
+    where
+        V: Vertex + Sized + bytemuck::Pod,
+        I: Instance,
+    {
+        // Push the new offsets into the offsets vectors
+        let offsets = self.end_offsets;
+
+        let mut indx_view = queue
+            .write_buffer_with(
+                &self.index_buf,
+                offsets.index_offset as u64,
+                primitives.index_buffer_len(),
+            )
+            .ok_or(PrimitiveError::AppendIndx)?;
+        let mut vert_view = queue
+            .write_buffer_with(
+                &self.vertex_buf,
+                offsets.vertex_offset as u64,
+                primitives.vertex_buffer_len(),
+            )
+            .ok_or(PrimitiveError::AppendVert)?;
+        let mut inst_view = queue
+            .write_buffer_with(
+                &self.instance_buf,
+                offsets.instance_offset as u64,
+                primitives.instance_buffer_len(),
+            )
+            .ok_or(PrimitiveError::AppendInst)?;
+
+        indx_view.copy_from_slice(primitives.index_bytes());
+        vert_view.copy_from_slice(primitives.vertex_bytes());
+        inst_view.copy_from_slice(&primitives.instance_bytes());
+
+        self.pipelines.push(primitives.pipeline());
+        self.offsets.push(offsets);
+
+        self.end_offsets.index_offset = offsets.index_offset + primitives.num_indicies();
+        self.end_offsets.vertex_offset = offsets.vertex_offset + primitives.num_vertices();
+        self.end_offsets.instance_offset = offsets.instance_offset + primitives.num_instances();
+
+        self.primitive_count += 1;
+
+        Ok(())
+    }
+
+    /// Loses track of all data in the buffers.
+    pub fn reset(&mut self) {
+        self.end_offsets = Default::default();
+        self.offsets.clear();
+        self.primitive_count = 0;
+    }
 }
 
 //
@@ -311,107 +389,4 @@ pub struct ArrowVertex {
 }
 impl Vertex for ArrowVertex {
     const ATTRIBS: &'static [VertexAttribute] = &vertex_attr_array![0 => Float32x4, 1 => Float32x4];
-}
-
-//
-// INSTANCES
-//
-
-//
-// Index Generating Functions
-//
-
-pub fn circle_indicies_from_verticies(
-    vertices: &[CircleVertex],
-) -> Result<Vec<u16>, Box<dyn Error>> {
-    let num_vertices = vertices.len();
-    if num_vertices % 4 != 0 {
-        return Err("Vertex amount not divisible by 4, so the vertices cannot form quads".into());
-    }
-
-    Ok((0..num_vertices as u16)
-        .step_by(4)
-        .fold(
-            Vec::with_capacity(size_of::<u16>() * num_vertices * 3 / 2),
-            |mut acc, i| {
-                acc.push([i, i + 1, i + 2, i + 2, i + 3, i]);
-
-                acc
-            },
-        )
-        .concat())
-}
-
-/// Creates indicies for a line single connected line from vertices
-/// if loop_back is set to true, it will connect the first with the last vertex
-pub fn line_indicies_from_vertices(
-    vertices: &[LineVertex],
-    loop_back: bool,
-) -> Result<Vec<u16>, Box<dyn Error>> {
-    let num_vertices = vertices.len();
-    if num_vertices == 1 {
-        return Err("Cannot form lines from a single vertex".into());
-    }
-
-    Ok((0..(num_vertices - (!loop_back as usize)) as u16)
-        .map(|i| [i, (i + 1) % num_vertices as u16])
-        .collect_vec()
-        .concat())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_line_indicies_from_vertices_loopback() {
-        let vertices = vec![
-            LineVertex {
-                position: [0.0, 0.0, 0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            LineVertex {
-                position: [0.0, 0.0, 0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            LineVertex {
-                position: [0.0, 0.0, 0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            LineVertex {
-                position: [0.0, 0.0, 0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-        ];
-
-        let indicies = line_indicies_from_vertices(&vertices, true).unwrap();
-
-        assert_eq!(indicies, vec![0, 1, 1, 2, 2, 3, 3, 0,])
-    }
-
-    #[test]
-    fn test_line_indicies_from_vertices_no_loopback() {
-        let vertices = vec![
-            LineVertex {
-                position: [0.0, 0.0, 0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            LineVertex {
-                position: [0.0, 0.0, 0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            LineVertex {
-                position: [0.0, 0.0, 0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            LineVertex {
-                position: [0.0, 0.0, 0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-        ];
-
-        let indicies = line_indicies_from_vertices(&vertices, false).unwrap();
-
-        assert_eq!(indicies, vec![0, 1, 1, 2, 2, 3])
-    }
 }

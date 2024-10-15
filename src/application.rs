@@ -16,7 +16,8 @@ use winit::platform::startup_notify::{
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::camera::Camera2D;
-use crate::render_context::shapes::{draw_arrow_2d, draw_circle_2d};
+use crate::draw::render;
+use crate::render_context::shapes::draw_circle_2d;
 use crate::render_context::{shapes, RenderContext};
 use crate::simulation::{Particle, Simulation};
 use crate::SAMPLE_COUNT;
@@ -469,57 +470,11 @@ impl WindowState {
         self.window.set_maximized(!maximized);
     }
 
+    /// Runs the renderer
     pub fn draw(&mut self) {
         let b4 = std::time::Instant::now();
 
-        // draw_arrow_2d(
-        //     &self.renderer,
-        //     vec2(0., 0.),
-        //     self.simulation.arrow_dir,
-        //     5.0,
-        //     0.5,
-        //     1.0,
-        //     1.0,
-        //     vec4(1.0, 0.0, 0.0, 1.0),
-        // );
-
-        let vp_size = self.renderer.viewport_size();
-
-        let grid_size_x = 30;
-        let grid_size_y = 25;
-        (0..grid_size_x)
-            .cartesian_product(0..grid_size_y)
-            .for_each(|(i, j)| {
-                let i: isize = i - (grid_size_x / 2);
-                let j: isize = j - (grid_size_y / 2);
-
-                let pos = vec2(
-                    vp_size.x * 2.0 * i as f32 / grid_size_x as f32,
-                    vp_size.y * 2.0 * j as f32 / grid_size_y as f32,
-                );
-
-                let acc = self.simulation.calculate_acc_at(pos);
-
-                draw_arrow_2d(
-                    &self.renderer,
-                    pos,
-                    acc.angle(Vector2::unit_x()).into(),
-                    5.0,
-                    0.5,
-                    1.0,
-                    1.0,
-                    vec4(1.0, 0.0, 0.0, 1.0),
-                );
-            });
-
-        self.simulation.bodies.iter().for_each(|b| {
-            draw_circle_2d(&self.renderer, b.position, 1.0, vec4(1.0, 1.0, 1.0, 1.0))
-        });
-
-        self.simulation.attractors.iter().for_each(|b| {
-            draw_circle_2d(&self.renderer, b.position, 4.0, vec4(1.0, 1.0, 1.0, 1.0))
-        });
-
+        render(&mut self.renderer, &self.queue);
         self.renderer
             .present_scene(&self.queue, &self.device, &self.surface, &self.msaa);
 
@@ -528,6 +483,7 @@ impl WindowState {
         println!("Time per frame: {dt:?}, Equivalent framerate: {fps} fps");
     }
 
+    /// Creates a texture for multisampling
     fn create_msaa_texture(device: &Device, config: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
         device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Nultisampling Texture"),
