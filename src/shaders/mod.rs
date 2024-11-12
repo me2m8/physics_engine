@@ -5,7 +5,8 @@ use wgpu::{
 };
 
 use crate::{
-    camera::{Camera, CameraState}, instance::{Instance, Instance2D, RawInstance2D}, render_context::{ArrowVertex, CircleVertex, LineVertex, Vertex}, SAMPLE_COUNT
+    camera::{Camera, CameraState},
+    render_context::{ArrowVertex, CircleVertex, LineVertex, Vertex}, SAMPLE_COUNT,
 };
 
 #[macro_export]
@@ -57,7 +58,7 @@ pub fn make_pipelines<T: Camera + Sized>(
         push_constant_ranges: &[],
     });
 
-    // Arrow2D pipeline
+    // PolygonFill pipeline
     pipelines.insert(
         PipelineType::Arrow2D,
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -84,7 +85,7 @@ pub fn make_pipelines<T: Camera + Sized>(
                 module: shaders.get("arrow2d.wgsl").unwrap(),
                 entry_point: "vs_main",
                 compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[ArrowVertex::DESC, Instance2D::DESC],
+                buffers: &[ArrowVertex::DESC],
             },
             fragment: Some(FragmentState {
                 module: shaders.get("arrow2d.wgsl").unwrap(),

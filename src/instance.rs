@@ -28,7 +28,7 @@ impl Instance2D {
 
 pub trait Instance {
     /// The associated raw type
-    type Raw: bytemuck::Zeroable + bytemuck::Pod + Sized;
+    type Raw;
 
     /// Vertex attributes
     const ATTRIBS: &'static [VertexAttribute];
@@ -47,11 +47,11 @@ impl Instance for Instance2D {
     type Raw = RawInstance2D;
 
     const ATTRIBS: &'static [VertexAttribute] = &vertex_attr_array![
+        0 => Float32x4, // Matrix4x4
+        1 => Float32x4, // Matrix4x4
         2 => Float32x4, // Matrix4x4
         3 => Float32x4, // Matrix4x4
-        4 => Float32x4, // Matrix4x4
-        5 => Float32x4, // Matrix4x4
-        6 => Float32x4, // Color
+        4 => Float32x4, // Color
     ];
 
     fn to_raw(&self) -> Self::Raw {

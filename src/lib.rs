@@ -6,7 +6,6 @@ pub mod shaders;
 pub mod primitives;
 pub mod instance;
 pub mod draw;
-pub mod error;
 
 pub const PARTICLE_COLOR: [f32; 4] = [0.0, 0.5, 1.0, 1.0];
 pub const CLEAR_COLOR: wgpu::Color = wgpu::Color {

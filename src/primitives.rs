@@ -5,14 +5,13 @@ use itertools::Itertools;
 
 use crate::{
     instance::Instance,
-    render_context::{ArrowVertex, CircleVertex, Vertex}, shaders::PipelineType,
+    render_context::{ArrowVertex, CircleVertex, Vertex},
 };
 
 #[derive(Clone, Debug)]
 pub struct PrimitiveTemplate<V: Vertex + Sized + bytemuck::Pod> {
     vertices: Vec<V>,
     indicies: Vec<u16>,
-    pipeline: PipelineType,
 }
 
 pub struct Primitive<V, I>
@@ -81,10 +80,6 @@ where
         &self.template
     }
     #[inline]
-    pub fn pipeline(&self) -> PipelineType {
-        self.template.pipeline
-    }
-    #[inline]
     pub fn indicies(&self) -> &[u16] {
         &self.template.indicies
     }
@@ -95,25 +90,6 @@ where
     #[inline]
     pub fn vertices(&self) -> &[V] {
         &self.template.vertices
-    }
-    #[inline]
-    pub fn num_vertices(&self) -> u32 {
-        self.template.vertices.len() as u32
-    }
-
-    #[inline]
-    pub fn index_bytes(&self) -> &[u8] {
-        bytemuck::cast_slice(self.indicies())
-    }
-    #[inline]
-    pub fn vertex_bytes(&self) -> &[u8] {
-        bytemuck::cast_slice(self.vertices())
-    }
-    #[inline]
-    pub fn instance_bytes(&self) -> Vec<u8> {
-        // Since the raw instances are created in this scope, we cannot return a reference to the
-        // bytes, as they will go out of scope
-        bytemuck::cast_slice(&self.instances_raw()).to_vec()
     }
 }
 
@@ -150,7 +126,7 @@ pub fn create_arrow_template(
 
     let indicies = [0, 1, 2, 2, 3, 0, 4, 5, 6].to_vec();
 
-    PrimitiveTemplate { vertices, indicies, pipeline: PipelineType::Arrow2D }
+    PrimitiveTemplate { vertices, indicies }
 }
 
 /// Create Circle Primitive
@@ -173,5 +149,5 @@ pub fn create_circle_primitive(radius: f32) -> PrimitiveTemplate<CircleVertex> {
     ].to_vec();
     let indicies = [0, 1, 2, 2, 3, 0].to_vec();
 
-    PrimitiveTemplate { vertices, indicies, pipeline: PipelineType::CircleFill }
+    PrimitiveTemplate { vertices, indicies }
 }

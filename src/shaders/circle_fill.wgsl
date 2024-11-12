@@ -2,12 +2,6 @@ struct QuadVertex {
     @location(0) position: vec4<f32>, 
     @location(1) color: vec4<f32>,
     @location(2) frag_coord: vec2<f32>,
-
-}
-
-struct Instance2D {
-    @location(0) transform: mat4x4<f32>,
-    @location(1) color: vec4<f32>,
 }
 
 struct Camera2D {
