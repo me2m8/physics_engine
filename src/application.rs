@@ -1,8 +1,10 @@
 use cgmath::{vec2, vec4, Deg, InnerSpace, Rad, Vector2, Zero};
 use itertools::Itertools;
+use rand::random;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::Instant;
 use wgpu::{Device, Queue, Surface, TextureUsages};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -18,11 +20,11 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use crate::camera::Camera2D;
 use crate::render_context::shapes::{draw_arrow_2d, draw_circle_2d};
 use crate::render_context::{shapes, RenderContext};
-use crate::simulation::{Particle, Simulation};
-use crate::SAMPLE_COUNT;
+use crate::simulation::Simulation;
+use crate::{PARTICLE_COUNT, SAMPLE_COUNT};
 
 pub struct Application {
-    reciever: Receiver<Action>,
+    receiver: Receiver<Action>,
     sender: Sender<Action>,
 
     wgpu_instance: wgpu::Instance,
@@ -35,7 +37,7 @@ pub struct Application {
 impl Application {
     pub fn new(
         _event_loop: &EventLoop,
-        reciever: Receiver<Action>,
+        receiver: Receiver<Action>,
         sender: Sender<Action>,
     ) -> Self {
         let wgpu_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -45,7 +47,7 @@ impl Application {
         });
 
         Self {
-            reciever,
+            receiver,
             sender,
             wgpu_instance,
             windows: Default::default(),
@@ -172,7 +174,7 @@ impl Application {
 impl ApplicationHandler for Application {
     /// Called when a proxy is told to wake this
     fn proxy_wake_up(&mut self, _event_loop: &dyn ActiveEventLoop) {
-        for i in self.reciever.try_iter() {
+        for i in self.receiver.try_iter() {
             println!("Received: {i:?}");
         }
     }
@@ -341,7 +343,7 @@ pub struct WindowState {
     /// The simulation
     simulation: Simulation,
 
-    // Miscelaneous window information
+    // Miscellaneous window information
     position: PhysicalPosition<i32>,
     mouse_position: PhysicalPosition<i32>,
     modifiers: ModifiersState,
@@ -360,7 +362,7 @@ impl WindowState {
     ) -> Result<Self, Box<dyn Error>> {
         let PhysicalSize { width, height } = window.inner_size();
 
-        // NOTE: This is safe beacuse the surface is dropped before the window
+        // NOTE: This is safe because the surface is dropped before the window
         let surface = unsafe {
             std::mem::transmute::<Surface<'_>, Surface<'static>>(instance.create_surface(&window)?)
         };
@@ -418,7 +420,7 @@ impl WindowState {
         };
 
         let renderer = RenderContext::<CameraType>::new(&device, &config);
-        let simulation = Simulation::new(5);
+        let simulation = Simulation::new(PARTICLE_COUNT);
 
         let msaa = Self::create_msaa_texture(&device, &config);
 
@@ -472,53 +474,49 @@ impl WindowState {
     pub fn draw(&mut self) {
         let b4 = std::time::Instant::now();
 
-        // draw_arrow_2d(
-        //     &self.renderer,
-        //     vec2(0., 0.),
-        //     self.simulation.arrow_dir,
-        //     5.0,
-        //     0.5,
-        //     1.0,
-        //     1.0,
-        //     vec4(1.0, 0.0, 0.0, 1.0),
-        // );
-
         let vp_size = self.renderer.viewport_size();
 
-        let grid_size_x = 30;
-        let grid_size_y = 25;
-        (0..grid_size_x)
-            .cartesian_product(0..grid_size_y)
-            .for_each(|(i, j)| {
-                let i: isize = i - (grid_size_x / 2);
-                let j: isize = j - (grid_size_y / 2);
+        let r = random();
 
-                let pos = vec2(
-                    vp_size.x * 2.0 * i as f32 / grid_size_x as f32,
-                    vp_size.y * 2.0 * j as f32 / grid_size_y as f32,
-                );
-
-                let acc = self.simulation.calculate_acc_at(pos);
-
-                draw_arrow_2d(
-                    &self.renderer,
-                    pos,
-                    acc.angle(Vector2::unit_x()).into(),
-                    5.0,
-                    0.5,
+        (0..self.simulation.particles).for_each(|i| {
+            let pos = self.simulation.position[i];
+            let density = self.simulation.density[i];
+            draw_circle_2d(
+                &self.renderer,
+                pos,
+                1.0,
+                vec4(
+                    r,
+                    1.0 - density,
+                    1.0 - density,
                     1.0,
-                    1.0,
-                    vec4(1.0, 0.0, 0.0, 1.0),
-                );
-            });
-
-        self.simulation.bodies.iter().for_each(|b| {
-            draw_circle_2d(&self.renderer, b.position, 1.0, vec4(1.0, 1.0, 1.0, 1.0))
+                ),
+            );
         });
 
-        self.simulation.attractors.iter().for_each(|b| {
-            draw_circle_2d(&self.renderer, b.position, 4.0, vec4(1.0, 1.0, 1.0, 1.0))
+        /*
+        self.simulation.particles.iter().for_each(|p| {
+            draw_arrow_2d( &self.renderer,
+                p.position,
+                p.velocity.angle(Vector2::unit_x()),
+                p.velocity.magnitude() / 3.0,
+                0.5,
+                0.5,
+                0.5,
+                vec4(1.0, 0.5, 1.0, 1.0),
+            );
+            draw_arrow_2d(
+                &self.renderer,
+                p.position,
+                p.acceleration.angle(Vector2::unit_x()),
+                p.acceleration.magnitude(),
+                0.5,
+                0.5,
+                0.5,
+                vec4(0.1, 0.1, 0.1, 1.0),
+            );
         });
+        */
 
         self.renderer
             .present_scene(&self.queue, &self.device, &self.surface, &self.msaa);

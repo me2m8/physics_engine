@@ -1204,6 +1204,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
+name = "loop-code"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e34e84519c7e6094612fb8afc431cd32bdfb5200b65eb76737e27e5437a5341"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "loop9"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1763,6 +1774,7 @@ dependencies = [
  "image",
  "itertools 0.13.0",
  "log",
+ "loop-code",
  "pollster",
  "rand",
  "tokio",

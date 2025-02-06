@@ -363,7 +363,7 @@ pub mod shapes {
         line_thickness: f32,
         point_length: f32,
         point_width: f32,
-    ) -> impl Fn(Vector2<f32>, Deg<f32>, Vector4<f32>) + '_ {
+    ) -> impl Fn(Vector2<f32>, Rad<f32>, Vector4<f32>) + '_ {
         move |p, dir, color| {
             draw_arrow_2d(
                 render_context,
@@ -383,7 +383,7 @@ pub mod shapes {
     pub fn draw_arrow_2d(
         render_context: &RenderContext<Camera2D>,
         p: Vector2<f32>,
-        dir: Deg<f32>,
+        dir: Rad<f32>,
         length: f32,
         line_thickness: f32,
         point_length: f32,
@@ -436,7 +436,7 @@ pub mod shapes {
             .add_primitive(&vertices, &indicies);
     }
 
-    fn rotate(vec: Vector2<f32>, angle: Deg<f32>) -> Vector2<f32> {
+    fn rotate(vec: Vector2<f32>, angle: Rad<f32>) -> Vector2<f32> {
         let (sin, cos) = angle.sin_cos();
         let rot_mat = Matrix2::new(cos, -sin, sin, cos);
 

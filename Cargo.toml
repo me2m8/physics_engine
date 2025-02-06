@@ -11,6 +11,7 @@ fastrand = "2.1.1"
 image = "0.25.2"
 itertools = "0.13.0"
 log = "0.4.22"
+loop-code = "0.5.2"
 pollster = "0.3.0"
 rand = "0.8.5"
 tokio = { version = "1.39.3", features = ["full"] }
