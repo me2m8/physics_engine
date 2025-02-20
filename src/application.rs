@@ -20,7 +20,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use crate::camera::Camera2D;
 use crate::render_context::shapes::{draw_arrow_2d, draw_circle_2d};
 use crate::render_context::{shapes, RenderContext};
-use crate::simulation::Simulation;
+use crate::sph_simulation::Simulation;
 use crate::{PARTICLE_COUNT, SAMPLE_COUNT};
 
 pub struct Application {
@@ -158,6 +158,8 @@ impl Application {
             }
             Action::ToggleDecorations => window.toggle_decorations(),
             Action::ToggleFullscreen => window.toggle_fullscreen(),
+            Action::StepSimulation => window.simulation.step_simulation_once(),
+            Action::TogglePauseSimulation => window.simulation.toggle_pause(),
             _ => {}
         }
     }
@@ -265,7 +267,7 @@ impl ApplicationHandler for Application {
             // WindowEvent::MouseWheel { device_id, delta, phase } => todo!(),
             // WindowEvent::MouseInput { device_id, state, button } => todo!(),
             WindowEvent::RedrawRequested => {
-                window.simulation.update();
+                window.simulation.step_simulation();
                 window.draw();
             }
             _ => {}
@@ -324,6 +326,9 @@ pub enum Action {
     CloseWindow,
     ToggleDecorations,
     ToggleFullscreen,
+    StepSimulation,
+    TogglePauseSimulation,
+    PauseSimulation,
 }
 
 pub struct WindowState {
@@ -478,6 +483,13 @@ impl WindowState {
 
         let r = random();
 
+        draw_circle_2d(
+            &self.renderer,
+            vec2(0.0, 0.0),
+            *crate::sph_simulation::SMOOTHING_RADIUS,
+            vec4(1.0, 1.0, 1.0, 0.2),
+        );
+
         (0..self.simulation.particles).for_each(|i| {
             let pos = self.simulation.position[i];
             let density = self.simulation.density[i];
@@ -485,12 +497,7 @@ impl WindowState {
                 &self.renderer,
                 pos,
                 1.0,
-                vec4(
-                    r,
-                    1.0 - density,
-                    1.0 - density,
-                    1.0,
-                ),
+                vec4(r, 1.0 - density, 1.0 - density, 1.0),
             );
         });
 
@@ -523,7 +530,7 @@ impl WindowState {
 
         let dt = std::time::Instant::now() - b4;
         let fps = 1.0 / dt.as_secs_f64();
-        println!("Time per frame: {dt:?}, Equivalent framerate: {fps} fps");
+        //println!("Time per frame: {dt:?}, Equivalent framerate: {fps} fps");
     }
 
     fn create_msaa_texture(device: &Device, config: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
@@ -582,9 +589,9 @@ impl<T: Eq> Binding<T> {
 
 #[rustfmt::skip]
 const KEYBINDS: &[Binding<KeyCode>] = &[
-    Binding::new(KeyCode::KeyN, ModifiersState::CONTROL, Action::CreateNewMainWindow),
     Binding::new(KeyCode::KeyD, ModifiersState::CONTROL, Action::ToggleDecorations),
     Binding::new(KeyCode::KeyF, ModifiersState::CONTROL, Action::ToggleFullscreen),
     Binding::new(KeyCode::KeyQ, ModifiersState::CONTROL, Action::CloseWindow),
-    Binding::new(KeyCode::Escape, ModifiersState::empty(), Action::CloseWindow),
+    Binding::new(KeyCode::Escape, ModifiersState::empty(), Action::TogglePauseSimulation),
+    Binding::new(KeyCode::KeyN, ModifiersState::empty(), Action::StepSimulation),
 ];

@@ -135,7 +135,7 @@ where
             render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
             if draw_circles {
-                info!("Drawing circles");
+                //info!("Drawing circles");
                 render_pass.set_pipeline(self.pipeline(PipelineType::CircleFill));
 
                 render_pass.set_vertex_buffer(0, self.circles.borrow().vb().slice(..));
@@ -144,7 +144,7 @@ where
                     wgpu::IndexFormat::Uint16,
                 );
 
-                render_pass.draw_indexed(0..self.circles.borrow().num_indicies(), 0, 0..1);
+                render_pass.draw_indexed(0..self.circles.borrow().num_indices(), 0, 0..1);
             }
             if draw_thin_lines {
                 info!("Drawing lines");
@@ -156,7 +156,7 @@ where
                     wgpu::IndexFormat::Uint16,
                 );
 
-                render_pass.draw_indexed(0..self.thin_lines.borrow().num_indicies(), 0, 0..1);
+                render_pass.draw_indexed(0..self.thin_lines.borrow().num_indices(), 0, 0..1);
             }
             if draw_arrows {
                 info!("Drawing arrows");
@@ -168,7 +168,7 @@ where
                     wgpu::IndexFormat::Uint16,
                 );
 
-                render_pass.draw_indexed(0..self.arrows.borrow().num_indicies(), 0, 0..1);
+                render_pass.draw_indexed(0..self.arrows.borrow().num_indices(), 0, 0..1);
             }
         }
 
@@ -211,11 +211,11 @@ where
 
 pub struct DrawPrimitive<V: Vertex + Sized + bytemuck::Pod> {
     vertices: Vec<V>,
-    indicies: Vec<u16>,
+    indices: Vec<u16>,
     ib: Buffer,
     vb: Buffer,
 
-    num_indicies: u32,
+    num_indices: u32,
 }
 
 impl<T> DrawPrimitive<T>
@@ -239,64 +239,59 @@ where
 
         Self {
             vertices: Default::default(),
-            indicies: Default::default(),
+            indices: Default::default(),
 
             vb,
             ib,
 
-            num_indicies: 0,
+            num_indices: 0,
         }
     }
 
-    /// Appends the vertices and indicies of a primitive to the vertex and index vectors
-    pub fn add_primitive(&mut self, vertices: &[T], indicies: &[u16]) {
-        self.add_indicies(indicies);
+    /// Appends the vertices and indices of a primitive to the vertex and index vectors
+    pub fn add_primitive(&mut self, vertices: &[T], indices: &[u16]) {
+        self.add_indices(indices);
         self.add_vertices(vertices);
     }
     fn add_vertices(&mut self, vertices: &[T]) {
         self.vertices.extend(vertices.iter());
     }
-    fn add_indicies(&mut self, indicies: &[u16]) {
+    fn add_indices(&mut self, indices: &[u16]) {
         let num_vertices = self.vertices.len() as u16;
-        self.indicies
-            .extend(indicies.iter().map(|i| i + num_vertices));
+        self.indices
+            .extend(indices.iter().map(|i| i + num_vertices));
     }
 
     pub fn populate_buffers(&mut self, queue: &Queue) {
         let num_vertices = self.vertices.len();
-        let num_indicies = self.indicies.len();
+        let num_indices = self.indices.len();
 
         let vb_bytes_size = (num_vertices * size_of::<T>()) as u64;
         let vb_bytes_parity = vb_bytes_size % COPY_BUFFER_ALIGNMENT;
 
-        let ib_bytes_size = (num_indicies * size_of::<u16>()) as u64;
+        let ib_bytes_size = (num_indices * size_of::<u16>()) as u64;
         let ib_bytes_parity = ib_bytes_size % COPY_BUFFER_ALIGNMENT;
 
         let mut vb_bytes = bytemuck::cast_slice::<T, u8>(&self.vertices).to_vec();
-        let mut ib_bytes = bytemuck::cast_slice::<u16, u8>(&self.indicies).to_vec();
+        let mut ib_bytes = bytemuck::cast_slice::<u16, u8>(&self.indices).to_vec();
 
         (0..vb_bytes_parity).for_each(|_| vb_bytes.push(0));
         (0..ib_bytes_parity).for_each(|_| ib_bytes.push(0));
 
-        println!("creating vb_view");
         let mut vb_view = queue.write_buffer_with(&self.vb, 0, unsafe {
             BufferSize::new_unchecked(vb_bytes_size + vb_bytes_parity)
         });
-        println!("creating ib_view");
         let mut ib_view = queue.write_buffer_with(&self.ib, 0, unsafe {
             BufferSize::new_unchecked(ib_bytes_size + ib_bytes_parity)
         });
 
-        println!("writing vb_view");
         vb_view.unwrap().as_mut().copy_from_slice(&vb_bytes);
-
-        println!("writing ib_view");
         ib_view.unwrap().as_mut().copy_from_slice(&ib_bytes);
 
-        self.num_indicies = self.indicies.len() as u32;
+        self.num_indices = self.indices.len() as u32;
 
         self.vertices.clear();
-        self.indicies.clear();
+        self.indices.clear();
     }
 
     pub fn ib(&self) -> &Buffer {
@@ -312,8 +307,8 @@ where
         !self.vertices.is_empty()
     }
 
-    pub fn num_indicies(&self) -> u32 {
-        self.num_indicies
+    pub fn num_indices(&self) -> u32 {
+        self.num_indices
     }
 }
 
@@ -348,12 +343,12 @@ pub mod shapes {
             CircleVertex { p: tr.into(), c: color.into(), fc: [ 1.,  1.]},
             CircleVertex { p: tl.into(), c: color.into(), fc: [ 1., -1.]},
         ];
-        let indicies = [0, 1, 2, 2, 3, 0];
+        let indices = [0, 1, 2, 2, 3, 0];
 
         render_context
             .circles
             .borrow_mut()
-            .add_primitive(&vertices, &indicies);
+            .add_primitive(&vertices, &indices);
     }
 
     /// Curries the [`draw_arrow_2d`] function to reduce the amount of arguments for repeditive use
@@ -428,12 +423,12 @@ pub mod shapes {
             ArrowVertex { p: point_top.into()   , c}
         ];
 
-        let indicies = [0, 1, 2, 2, 3, 0, 4, 5, 6];
+        let indices = [0, 1, 2, 2, 3, 0, 4, 5, 6];
 
         render_context
             .arrows
             .borrow_mut()
-            .add_primitive(&vertices, &indicies);
+            .add_primitive(&vertices, &indices);
     }
 
     fn rotate(vec: Vector2<f32>, angle: Rad<f32>) -> Vector2<f32> {
@@ -529,7 +524,7 @@ impl Instance {
 // Index Generating Functions
 //
 
-pub fn circle_indicies_from_verticies(
+pub fn circle_indices_from_vertices(
     vertices: &[CircleVertex],
 ) -> Result<Vec<u16>, Box<dyn Error>> {
     let num_vertices = vertices.len();
@@ -550,9 +545,9 @@ pub fn circle_indicies_from_verticies(
         .concat())
 }
 
-/// Creates indicies for a line single connected line from vertices
+/// Creates indices for a line single connected line from vertices
 /// if loop_back is set to true, it will connect the first with the last vertex
-pub fn line_indicies_from_vertices(
+pub fn line_indices_from_vertices(
     vertices: &[LineVertex],
     loop_back: bool,
 ) -> Result<Vec<u16>, Box<dyn Error>> {
@@ -572,7 +567,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_line_indicies_from_vertices_loopback() {
+    fn test_line_indices_from_vertices_loopback() {
         let vertices = vec![
             LineVertex {
                 position: [0.0, 0.0, 0.0, 0.0],
@@ -592,13 +587,13 @@ mod tests {
             },
         ];
 
-        let indicies = line_indicies_from_vertices(&vertices, true).unwrap();
+        let indices = line_indices_from_vertices(&vertices, true).unwrap();
 
-        assert_eq!(indicies, vec![0, 1, 1, 2, 2, 3, 3, 0,])
+        assert_eq!(indices, vec![0, 1, 1, 2, 2, 3, 3, 0,])
     }
 
     #[test]
-    fn test_line_indicies_from_vertices_no_loopback() {
+    fn test_line_indices_from_vertices_no_loopback() {
         let vertices = vec![
             LineVertex {
                 position: [0.0, 0.0, 0.0, 0.0],
@@ -618,8 +613,8 @@ mod tests {
             },
         ];
 
-        let indicies = line_indicies_from_vertices(&vertices, false).unwrap();
+        let indices = line_indices_from_vertices(&vertices, false).unwrap();
 
-        assert_eq!(indicies, vec![0, 1, 1, 2, 2, 3])
+        assert_eq!(indices, vec![0, 1, 1, 2, 2, 3])
     }
 }
