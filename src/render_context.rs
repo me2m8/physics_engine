@@ -14,8 +14,9 @@ use wgpu::{
     util::{DeviceExt, RenderEncoder},
     vertex_attr_array, BlendComponent, BlendState, Buffer, BufferAddress, BufferSize, BufferUsages,
     ColorWrites, Device, FragmentState, FrontFace, PipelineCompilationOptions, PrimitiveState,
-    PrimitiveTopology, Queue, QueueWriteBufferView, RenderPipeline, ShaderModule, Surface,
-    SurfaceConfiguration, Texture, VertexAttribute, VertexBufferLayout, COPY_BUFFER_ALIGNMENT,
+    PrimitiveTopology, Queue, QueueWriteBufferView, RenderPass, RenderPipeline, ShaderModule,
+    Surface, SurfaceConfiguration, Texture, VertexAttribute, VertexBufferLayout,
+    COPY_BUFFER_ALIGNMENT,
 };
 
 use crate::{
@@ -81,21 +82,10 @@ where
         surface: &Surface,
         msaa: &Texture,
     ) {
-        // Check primitive usage
-        let draw_circles = self.circles.borrow().is_in_use();
-        let draw_thin_lines = self.thin_lines.borrow().is_in_use();
-        let draw_arrows = self.arrows.borrow().is_in_use();
-
         // Populate buffers if primitive has been drawn
-        if draw_circles {
-            self.circles.get_mut().populate_buffers(queue);
-        }
-        if draw_thin_lines {
-            self.thin_lines.get_mut().populate_buffers(queue);
-        }
-        if draw_arrows {
-            self.arrows.get_mut().populate_buffers(queue);
-        }
+        self.circles.get_mut().populate_buffers(queue);
+        self.thin_lines.get_mut().populate_buffers(queue);
+        self.arrows.get_mut().populate_buffers(queue);
 
         self.write_camera_buffer(queue);
 
@@ -134,42 +124,16 @@ where
             // Set the camera bind group
             render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
-            if draw_circles {
-                //info!("Drawing circles");
-                render_pass.set_pipeline(self.pipeline(PipelineType::CircleFill));
-
-                render_pass.set_vertex_buffer(0, self.circles.borrow().vb().slice(..));
-                render_pass.set_index_buffer(
-                    self.circles.borrow().ib().slice(..),
-                    wgpu::IndexFormat::Uint16,
-                );
-
-                render_pass.draw_indexed(0..self.circles.borrow().num_indices(), 0, 0..1);
-            }
-            if draw_thin_lines {
-                info!("Drawing lines");
-                render_pass.set_pipeline(self.pipeline(PipelineType::ZeroWidthLines));
-
-                render_pass.set_vertex_buffer(0, self.thin_lines.borrow().vb().slice(..));
-                render_pass.set_index_buffer(
-                    self.thin_lines.borrow().ib().slice(..),
-                    wgpu::IndexFormat::Uint16,
-                );
-
-                render_pass.draw_indexed(0..self.thin_lines.borrow().num_indices(), 0, 0..1);
-            }
-            if draw_arrows {
-                info!("Drawing arrows");
-                render_pass.set_pipeline(self.pipeline(PipelineType::PolygonFill));
-
-                render_pass.set_vertex_buffer(0, self.arrows.borrow().vb().slice(..));
-                render_pass.set_index_buffer(
-                    self.arrows.borrow().ib().slice(..),
-                    wgpu::IndexFormat::Uint16,
-                );
-
-                render_pass.draw_indexed(0..self.arrows.borrow().num_indices(), 0, 0..1);
-            }
+            self.circles
+                .borrow_mut()
+                .render_primitive(&mut render_pass, self.pipeline(PipelineType::CircleFill));
+            self.thin_lines.borrow_mut().render_primitive(
+                &mut render_pass,
+                self.pipeline(PipelineType::ZeroWidthLines),
+            );
+            self.arrows
+                .borrow_mut()
+                .render_primitive(&mut render_pass, self.pipeline(PipelineType::PolygonFill));
         }
 
         queue.submit(std::iter::once(encoder.finish()));
@@ -216,6 +180,7 @@ pub struct DrawPrimitive<V: Vertex + Sized + bytemuck::Pod> {
     vb: Buffer,
 
     num_indices: u32,
+    in_use: bool,
 }
 
 impl<T> DrawPrimitive<T>
@@ -245,6 +210,7 @@ where
             ib,
 
             num_indices: 0,
+            in_use: false,
         }
     }
 
@@ -262,7 +228,12 @@ where
             .extend(indices.iter().map(|i| i + num_vertices));
     }
 
+    /// Populates the buffers with data. If there is no data, this function just returns
     pub fn populate_buffers(&mut self, queue: &Queue) {
+        if !self.has_data() {
+            return;
+        }
+
         let num_vertices = self.vertices.len();
         let num_indices = self.indices.len();
 
@@ -292,6 +263,25 @@ where
 
         self.vertices.clear();
         self.indices.clear();
+
+        self.in_use = true;
+    }
+
+    /// Renders the primitive on the given render pass
+    pub fn render_primitive(&mut self, render_pass: &mut RenderPass, pipeline: &RenderPipeline) {
+        if !self.in_use {
+            return;
+        }
+
+        info!("Drawing primitive");
+        render_pass.set_pipeline(pipeline);
+
+        render_pass.set_vertex_buffer(0, self.vb().slice(..));
+        render_pass.set_index_buffer(self.ib().slice(..), wgpu::IndexFormat::Uint16);
+
+        render_pass.draw_indexed(0..self.num_indices(), 0, 0..1);
+
+        self.in_use = false;
     }
 
     pub fn ib(&self) -> &Buffer {
@@ -304,6 +294,12 @@ where
     /// Returns whether the given primitive has been drawn
     #[inline]
     pub fn is_in_use(&self) -> bool {
+        self.in_use
+    }
+
+    /// Returns whether the given primitive has been drawn
+    #[inline]
+    pub fn has_data(&self) -> bool {
         !self.vertices.is_empty()
     }
 
@@ -524,9 +520,7 @@ impl Instance {
 // Index Generating Functions
 //
 
-pub fn circle_indices_from_vertices(
-    vertices: &[CircleVertex],
-) -> Result<Vec<u16>, Box<dyn Error>> {
+pub fn circle_indices_from_vertices(vertices: &[CircleVertex]) -> Result<Vec<u16>, Box<dyn Error>> {
     let num_vertices = vertices.len();
     if num_vertices % 4 != 0 {
         return Err("Vertex amount not divisible by 4, so the vertices cannot form quads".into());

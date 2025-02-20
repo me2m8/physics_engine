@@ -28,9 +28,7 @@ pub struct Application {
     sender: Sender<Action>,
 
     wgpu_instance: wgpu::Instance,
-
     windows: HashMap<WindowId, WindowState>,
-
     monitor_size: PhysicalSize<u32>,
 }
 
@@ -182,9 +180,14 @@ impl ApplicationHandler for Application {
     }
 
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let monitor = event_loop
-            .primary_monitor()
-            .expect("Expected to be able to get primary monitor");
+        let mut monitor_result = event_loop
+            .primary_monitor();
+
+        if monitor_result.is_none() {
+            monitor_result = event_loop.available_monitors().next();
+        }
+
+        let monitor = monitor_result.expect("Exppected to be able to get any monitor");
 
         let video_mode = monitor
             .current_video_mode()
@@ -480,13 +483,12 @@ impl WindowState {
         let b4 = std::time::Instant::now();
 
         let vp_size = self.renderer.viewport_size();
-
-        let r = random();
+        //let r = random();
 
         draw_circle_2d(
             &self.renderer,
             vec2(0.0, 0.0),
-            *crate::sph_simulation::SMOOTHING_RADIUS,
+            crate::sph_simulation::SMOOTHING_RADIUS,
             vec4(1.0, 1.0, 1.0, 0.2),
         );
 
@@ -497,33 +499,9 @@ impl WindowState {
                 &self.renderer,
                 pos,
                 1.0,
-                vec4(r, 1.0 - density, 1.0 - density, 1.0),
+                vec4(1.0, 1.0 - density, 1.0 - density, 1.0),
             );
         });
-
-        /*
-        self.simulation.particles.iter().for_each(|p| {
-            draw_arrow_2d( &self.renderer,
-                p.position,
-                p.velocity.angle(Vector2::unit_x()),
-                p.velocity.magnitude() / 3.0,
-                0.5,
-                0.5,
-                0.5,
-                vec4(1.0, 0.5, 1.0, 1.0),
-            );
-            draw_arrow_2d(
-                &self.renderer,
-                p.position,
-                p.acceleration.angle(Vector2::unit_x()),
-                p.acceleration.magnitude(),
-                0.5,
-                0.5,
-                0.5,
-                vec4(0.1, 0.1, 0.1, 1.0),
-            );
-        });
-        */
 
         self.renderer
             .present_scene(&self.queue, &self.device, &self.surface, &self.msaa);

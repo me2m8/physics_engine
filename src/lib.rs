@@ -14,8 +14,8 @@ pub const CLEAR_COLOR: wgpu::Color = wgpu::Color {
 };
 
 pub const SAMPLE_COUNT: u32 = 4;
-pub const VIEWPORT_SCALE: f32 = 350.0;
-pub const PARTICLE_COUNT: usize = 500;
+pub const VIEWPORT_SCALE: f32 = 450.0;
+pub const PARTICLE_COUNT: usize = 1000;
 
 pub const MAX_CIRCLES: usize = 1024;
 pub const MAX_LINES: usize = 1024;

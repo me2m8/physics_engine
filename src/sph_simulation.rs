@@ -3,37 +3,26 @@ use std::{f32::consts::PI, sync::Mutex, time::Instant};
 use cgmath::{vec2, InnerSpace, Vector2, Zero};
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use rand::random;
+use rand::{random, seq::IteratorRandom};
 
 use rayon::prelude::*;
 use tracing_subscriber::fmt::time;
 
 // Tait EOS pressure constants
 const RHO_0: f32 = 1000.0; // The rest density in kg/m^3
-const GAMMA: f32 = 7.0; // Common value for water
-const C: f32 = 100.0;
-const B: f32 = (C * C * RHO_0) / GAMMA;
-
-const CFL: f32 = 0.2; // Timestep safety factor
-const INITIAL_SPACING: f32 = 5.0;
 const TARGET_FRAME_TIME: f32 = 1.0 / 60.0;
-const SMOOTHING_RADIUS: f32 = 15.0;
+pub const SMOOTHING_RADIUS: f32 = 10.0;
 
 lazy_static! {
-    static ref SIGMA_2: f32 = 15.0 / (7.0 * PI * ((*SMOOTHING_RADIUS).powi(2)));
+    static ref SIGMA_2: f32 = 15.0 / (7.0 * PI * SMOOTHING_RADIUS.powi(2));
 }
 
-const BOUNDARY_WIDTH: f32 = 200.0; // in Meters
+const BOUNDARY_WIDTH: f32 = 300.0; // in Meters
 const HALF_WIDTH: f32 = BOUNDARY_WIDTH / 2.0;
-const BOUNDARY_HEIGHT: f32 = 100.0; // in Meters
+const BOUNDARY_HEIGHT: f32 = 150.0; // in Meters
 const HALF_HEIGHT: f32 = BOUNDARY_HEIGHT / 2.0;
-const WALL_PRESSURE_K: f32 = 1E2; // coeff for calculating pressure from wall
 
-static mut ITERATIONS: usize = 0;
-
-const G: f32 = 6.674E-11;
-const GRAVITATIONAL_CONSTANT: f32 = 9.82;
-const EPSILON: f32 = 0.1; // added when dividing by dividing distance to avoid dividing by zero
+const GRAVITATIONAL_CONSTANT: f32 = 120.0;
 
 pub struct Simulation {
     pub mass: Vec<f32>,
@@ -81,10 +70,12 @@ impl Simulation {
             .map(|v| v.magnitude())
             .reduce(|| 0.0, f32::max);
 
-        let c = 0.1;
+        dbg!(v_max);
+
+        let c = 10.0;
         if v_max > 0.0 {
-            let timestep = c * SMOOTHING_RADIUS / v_max;
-            let iterations = (TARGET_FRAME_TIME / timestep).floor() as usize;
+            let timestep = (c * SMOOTHING_RADIUS / v_max).min(TARGET_FRAME_TIME);
+            let iterations = dbg!(TARGET_FRAME_TIME / timestep).ceil() as usize;
             (iterations, timestep)
         } else {
             (1, TARGET_FRAME_TIME)
@@ -137,7 +128,7 @@ impl Simulation {
                 (0..self.particles)
                     .map(|j| {
                         let r = self.position[j] - self.position[i];
-                        self.mass[j] * w_spiky(r.magnitude(), *SMOOTHING_RADIUS)
+                        self.mass[j] * w_spiky(r.magnitude(), SMOOTHING_RADIUS)
                     })
                     .sum::<f32>()
             })
@@ -157,6 +148,7 @@ impl Simulation {
             .into_par_iter()
             .map(|i| self.linear_pressure(i))
             .collect();
+
         self.pressure.copy_from_slice(&pressures);
     }
 
@@ -177,17 +169,20 @@ impl Simulation {
                     vec2(angle.cos(), angle.sin())
                 };
 
-                let slope = slope_w_spiky(dist, *SMOOTHING_RADIUS);
+                let slope = slope_w_spiky(dist, SMOOTHING_RADIUS);
 
-                let shared_pressure = (self.pressure[i] + self.pressure[j]) / 2.0;
-                -shared_pressure * r_hat * slope * self.mass[j] / self.density[i]
+                -r_hat * slope * self.mass[i] * (self.pressure[i] + self.pressure[j]) / (2.0 * self.density[j])
             })
             .sum()
     }
 
+    fn get_gravitational_force() -> Vector2<f32> {
+        -Vector2::unit_y() * GRAVITATIONAL_CONSTANT
+    }
+
     /// Gets the acceleration for a given particle
     fn get_acceleration(&self, i: usize) -> Vector2<f32> {
-        self.get_pressure_force(i)
+        self.get_pressure_force(i) + Self::get_gravitational_force()
     }
 
     fn bounce_particles_on_walls(&mut self) {
@@ -235,16 +230,20 @@ impl Simulation {
         }
         self.step_once = false;
 
+        let (iterations, timestep) = self.get_timestep();
+        dbg!(iterations, timestep);
 
-        self.bounce_particles_on_walls();
+        for _ in 0..iterations {
+            self.bounce_particles_on_walls();
 
-        time_function("densities", || self.update_densities());
-        time_function("pressures", || self.update_pressures());
-        time_function("accelerations", || self.update_accelerations());
+            time_function("densities", || self.update_densities());
+            time_function("pressures", || self.update_pressures());
+            time_function("accelerations", || self.update_accelerations());
 
-        // Integrate velocity and position
-        self.leapfrog_velocities(TARGET_FRAME_TIME);
-        self.leapfrog_position(TARGET_FRAME_TIME);
+            // Integrate velocity and position
+            self.leapfrog_velocities(timestep);
+            self.leapfrog_position(timestep);
+        }
     }
 
     pub fn step_simulation_once(&mut self) {
@@ -273,46 +272,6 @@ fn slope_w_spiky(dist: f32, radi: f32) -> f32 {
 
     let scale = -30.0 / (PI * radi.powi(5));
     (radi - dist).powi(2) * scale
-}
-
-/// cubic spline approximation smoothing kernel. Denoted W(r, h)
-fn w_cubic(dist: f32, radi: f32) -> f32 {
-    let q = dist / radi;
-    let sigma_2 = 15.0 / (7.0 * PI * radi.powi(2));
-    // static ref SIGMA_2: f32 = 15.0 / (7.0 * PI * (*SMOOTHING_RADIUS).powi(2));
-
-    sigma_2
-        * match q {
-            x if x < 1. => (2. / 3.) - x.powi(2) + (1. / 2.) * x.powi(3),
-            x if x < 2. => (1. / 6.) * (2. - x).powi(3),
-            _ => 0.,
-        }
-}
-
-fn w_cubic_derivative(dist: f32, radi: f32) -> f32 {
-    let q = dist / radi;
-    let sigma_2 = 15.0 / (7.0 * PI * radi.powi(3));
-
-    sigma_2
-        * match q {
-            x if x < 1. => -2. * q + (3. / 2.) * q.powi(2),
-            x if x < 2. => (1. / 3.) * (2. - q).powi(2),
-            _ => 0.0,
-        }
-}
-
-fn calculate_w_integral() -> f32 {
-    let steps = 10000;
-    let dr = 2.0 * *SMOOTHING_RADIUS / steps as f32;
-    let mut integral = 0.0;
-
-    for i in 0..steps {
-        let r = i as f32 * dr; // Current radius
-        let w = w_cubic(r, *SMOOTHING_RADIUS); // Kernel value at r
-        integral += w * 2.0 * PI * r * dr; // Contribution to the integral
-    }
-
-    integral
 }
 
 fn time_function<F: FnMut()>(message: &str, mut f: F) {
