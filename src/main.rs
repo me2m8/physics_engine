@@ -1,6 +1,5 @@
-
-use std::sync::mpsc;
 use physics_engine::application::Application;
+use std::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
@@ -8,7 +7,6 @@ async fn main() {
     //    .with_max_level(tracing::Level::INFO)
     //    .with_timer(tracing_subscriber::fmt::time::uptime())
     //    .init();
-
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
     let (tx, rx) = mpsc::channel();

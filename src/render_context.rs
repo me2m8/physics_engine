@@ -433,6 +433,28 @@ pub mod shapes {
 
         rot_mat * vec
     }
+
+    pub fn draw_line_2d(
+        render_context: &RenderContext<Camera2D>,
+        start: Vector2<f32>,
+        end: Vector2<f32>,
+        color: Vector4<f32>,
+    ) {
+        let s = vec4(start.x, start.y, 0.0, 1.0);
+        let e = vec4(end.x, end.y, 0.0, 1.0);
+
+        #[rustfmt::skip]
+        let vertices = [
+            LineVertex { position: s.into(), color: color.into() },
+            LineVertex { position: e.into(), color: color.into() },
+        ];
+        let indices = [0, 1];
+
+        render_context
+            .thin_lines
+            .borrow_mut()
+            .add_primitive(&vertices, &indices)
+    }
 }
 
 //

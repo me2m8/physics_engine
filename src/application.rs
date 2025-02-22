@@ -18,9 +18,9 @@ use winit::platform::startup_notify::{
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::camera::Camera2D;
-use crate::render_context::shapes::{draw_arrow_2d, draw_circle_2d};
+use crate::render_context::shapes::{draw_arrow_2d, draw_circle_2d, draw_line_2d};
 use crate::render_context::{shapes, RenderContext};
-use crate::sph_simulation::Simulation;
+use crate::sph_simulation::{Simulation, SMOOTHING_RADIUS};
 use crate::{PARTICLE_COUNT, SAMPLE_COUNT};
 
 pub struct Application {
@@ -180,8 +180,7 @@ impl ApplicationHandler for Application {
     }
 
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let mut monitor_result = event_loop
-            .primary_monitor();
+        let mut monitor_result = event_loop.primary_monitor();
 
         if monitor_result.is_none() {
             monitor_result = event_loop.available_monitors().next();
@@ -480,10 +479,43 @@ impl WindowState {
     }
 
     pub fn draw(&mut self) {
-        let b4 = std::time::Instant::now();
-
         let vp_size = self.renderer.viewport_size();
-        //let r = random();
+
+        let grid_spacing = self.simulation.spacial_hashing.spacing;
+
+        let half_w = vp_size.x / 2.;
+        let half_h = vp_size.y / 2.;
+
+        (0..50).for_each(|i| {
+            let x = (i as f32) * grid_spacing;
+            draw_line_2d(
+                &self.renderer,
+                vec2(x, -half_h),
+                vec2(x, half_h),
+                vec4(1.0, 1.0, 1.0, 0.1),
+            );
+            draw_line_2d(
+                &self.renderer,
+                vec2(-x, -half_h),
+                vec2(-x, half_h),
+                vec4(1.0, 1.0, 1.0, 0.1),
+            );
+        });
+        (0..50).for_each(|i| {
+            let y = (i as f32) * grid_spacing;
+            draw_line_2d(
+                &self.renderer,
+                vec2(-half_w, y),
+                vec2(half_w, y),
+                vec4(1.0, 1.0, 1.0, 0.1),
+            );
+            draw_line_2d(
+                &self.renderer,
+                vec2(-half_w, -y),
+                vec2(half_w, -y),
+                vec4(1.0, 1.0, 1.0, 0.1),
+            );
+        });
 
         draw_circle_2d(
             &self.renderer,
@@ -494,26 +526,20 @@ impl WindowState {
 
         (0..self.simulation.particles).for_each(|i| {
             let pos = self.simulation.position[i];
-            let density = self.simulation.density[i];
-            draw_circle_2d(
-                &self.renderer,
-                pos,
-                1.0,
-                vec4(1.0, 1.0 - density, 1.0 - density, 1.0),
-            );
+            let velocity= self.simulation.half_step_velocity[i].magnitude();
+
+            let r = velocity / 20.0;
+
+            draw_circle_2d(&self.renderer, pos, 1.0, vec4(1.0, 1.0 - r, 1.0 - r, 1.0));
         });
 
         self.renderer
             .present_scene(&self.queue, &self.device, &self.surface, &self.msaa);
-
-        let dt = std::time::Instant::now() - b4;
-        let fps = 1.0 / dt.as_secs_f64();
-        //println!("Time per frame: {dt:?}, Equivalent framerate: {fps} fps");
     }
 
     fn create_msaa_texture(device: &Device, config: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
         device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Nultisampling Texture"),
+            label: Some("Multisampling Texture"),
             size: wgpu::Extent3d {
                 width: config.width,
                 height: config.height,

@@ -6,7 +6,8 @@ use wgpu::{
 
 use crate::{
     camera::{Camera, CameraState},
-    render_context::{ArrowVertex, CircleVertex, LineVertex, Vertex}, SAMPLE_COUNT,
+    render_context::{ArrowVertex, CircleVertex, LineVertex, Vertex},
+    SAMPLE_COUNT,
 };
 
 #[macro_export]
@@ -195,7 +196,7 @@ pub fn make_pipelines<T: Camera + Sized>(
                 front_face: FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode: wgpu::PolygonMode::Line,
                 conservative: false,
             },
             multiview: None,
