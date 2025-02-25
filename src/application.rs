@@ -1,14 +1,16 @@
-use cgmath::{vec2, vec4, Deg, InnerSpace, Rad, Vector2, Zero};
+use cgmath::{vec2, vec4, Deg, InnerSpace, Rad, Vector2, Vector3, Vector4, Zero};
 use itertools::Itertools;
 use rand::random;
 use std::collections::HashMap;
 use std::error::Error;
+use std::f32::consts::PI;
+use std::process::exit;
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::Instant;
-use wgpu::{Device, Queue, Surface, TextureUsages};
+use wgpu::TextureUsages;
+use wgpu::{Device, Queue, Surface};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 #[cfg(not(target_os = "macos"))]
@@ -20,8 +22,10 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use crate::camera::Camera2D;
 use crate::render_context::shapes::{draw_arrow_2d, draw_circle_2d, draw_line_2d};
 use crate::render_context::{shapes, RenderContext};
-use crate::sph_simulation::{Simulation, SMOOTHING_RADIUS};
-use crate::{PARTICLE_COUNT, SAMPLE_COUNT};
+use crate::sph_simulation::{
+    w_spiky, Simulation, HALF_HEIGHT, HALF_WIDTH, RHO_0, SMOOTHING_RADIUS,
+};
+use crate::{inverse_lerp, lerp, PARTICLE_COUNT, PARTICLE_RADIUS, SAMPLE_COUNT, VIEWPORT_SCALE};
 
 pub struct Application {
     receiver: Receiver<Action>,
@@ -158,6 +162,13 @@ impl Application {
             Action::ToggleFullscreen => window.toggle_fullscreen(),
             Action::StepSimulation => window.simulation.step_simulation_once(),
             Action::TogglePauseSimulation => window.simulation.toggle_pause(),
+            Action::DeselectParticle => window.selected_particle = None,
+            Action::ToggleDebugMode => window.debug_mode = !window.debug_mode,
+            Action::RestartSimulation => window.simulation = Simulation::new(PARTICLE_COUNT),
+            Action::SpawnParticle => window.simulation.add_new_particle(window.mouse_position),
+            Action::SpawnManyParticles => window
+                .simulation
+                .add_many_new_particles(window.mouse_position, 9.0),
             _ => {}
         }
     }
@@ -216,10 +227,32 @@ impl ApplicationHandler for Application {
                 token: _,
             } => todo!(),
             WindowEvent::Moved(position) => {}
-            WindowEvent::CursorMoved { position, .. } => {}
+            WindowEvent::CursorMoved {
+                position: PhysicalPosition { x, y },
+                ..
+            } => {
+                // Translate mouse screen coordinates to mouse world coordinates
+                let PhysicalSize { width, height } = window.window.inner_size();
+                let x = VIEWPORT_SCALE * (x as f32 - width as f32 / 2.0) / width as f32;
+                let y = -VIEWPORT_SCALE * (y as f32 - height as f32 / 2.0) / width as f32;
+                window.mouse_position = vec2(x, y);
+            }
             WindowEvent::CursorLeft { .. } => {}
             WindowEvent::CursorEntered { .. } => {}
-            WindowEvent::MouseInput { state, button, .. } => {}
+            WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left && state == ElementState::Pressed {
+                    let pos = window.mouse_position;
+                    let target = window.simulation.get_closest_particle(pos);
+
+                    dbg!(window.simulation.color_field[target]);
+                    dbg!(window.simulation.density[target]);
+                    dbg!(window.simulation.pressure[target]);
+                    dbg!(window.simulation.acceleration[target]);
+                    dbg!(window.simulation.half_step_velocity[target]);
+
+                    window.selected_particle = Some(target);
+                }
+            }
             WindowEvent::Resized(new_size) => window.resize(new_size),
             WindowEvent::CloseRequested => {
                 println!("Removed window: {window_id:?}");
@@ -331,6 +364,11 @@ pub enum Action {
     StepSimulation,
     TogglePauseSimulation,
     PauseSimulation,
+    DeselectParticle,
+    ToggleDebugMode,
+    RestartSimulation,
+    SpawnParticle,
+    SpawnManyParticles,
 }
 
 pub struct WindowState {
@@ -349,10 +387,11 @@ pub struct WindowState {
 
     /// The simulation
     simulation: Simulation,
+    selected_particle: Option<usize>,
+    debug_mode: bool,
 
     // Miscellaneous window information
-    position: PhysicalPosition<i32>,
-    mouse_position: PhysicalPosition<i32>,
+    mouse_position: Vector2<f32>,
     modifiers: ModifiersState,
     clear_color: wgpu::Color,
 
@@ -442,9 +481,10 @@ impl WindowState {
             renderer,
 
             simulation,
+            selected_particle: None,
+            debug_mode: true,
 
-            position: Default::default(),
-            mouse_position: Default::default(),
+            mouse_position: Vector2::zero(),
             modifiers: Default::default(),
             clear_color,
 
@@ -479,14 +519,41 @@ impl WindowState {
     }
 
     pub fn draw(&mut self) {
+        if self.debug_mode {
+            self.draw_spatial_grid();
+
+            (0..self.simulation.particles).for_each(|i| {
+                let pos = self.simulation.position[i];
+                draw_circle_2d(
+                    &self.renderer,
+                    pos,
+                    PARTICLE_RADIUS,
+                    vec4(1.0, 1.0, 1.0, 1.0),
+                );
+            });
+
+            self.draw_boundary_particles();
+            self.draw_debug_selected_particle();
+        } else {
+            self.draw_particles();
+            self.draw_boundary_square();
+        }
+
+        self.renderer
+            .present_scene(&self.queue, &self.device, &self.surface, &self.msaa);
+    }
+
+    fn draw_spatial_grid(&self) {
         let vp_size = self.renderer.viewport_size();
 
         let grid_spacing = self.simulation.spacial_hashing.spacing;
+        let n_lines = (vp_size.x / grid_spacing).ceil() as usize;
 
         let half_w = vp_size.x / 2.;
         let half_h = vp_size.y / 2.;
 
-        (0..50).for_each(|i| {
+        // Draw Vertical Grid Lines
+        (0..n_lines).for_each(|i| {
             let x = (i as f32) * grid_spacing;
             draw_line_2d(
                 &self.renderer,
@@ -501,7 +568,8 @@ impl WindowState {
                 vec4(1.0, 1.0, 1.0, 0.1),
             );
         });
-        (0..50).for_each(|i| {
+        // Draw Horizontal Grid Lines
+        (0..n_lines).for_each(|i| {
             let y = (i as f32) * grid_spacing;
             draw_line_2d(
                 &self.renderer,
@@ -516,25 +584,145 @@ impl WindowState {
                 vec4(1.0, 1.0, 1.0, 0.1),
             );
         });
+    }
 
-        draw_circle_2d(
-            &self.renderer,
-            vec2(0.0, 0.0),
-            crate::sph_simulation::SMOOTHING_RADIUS,
-            vec4(1.0, 1.0, 1.0, 0.2),
-        );
+    fn draw_debug_selected_particle(&self) {
+        if let Some(pi) = self.selected_particle {
+            let pos = self.simulation.position[pi];
+
+            draw_circle_2d(
+                &self.renderer,
+                pos,
+                crate::sph_simulation::SMOOTHING_RADIUS,
+                vec4(1.0, 1.0, 1.0, 0.2),
+            );
+
+            draw_circle_2d(
+                &self.renderer,
+                pos,
+                PARTICLE_RADIUS,
+                vec4(0.0, 1.0, 0.0, 1.0),
+            );
+
+            let neighbours = self
+                .simulation
+                .spacial_hashing
+                .query_position(pos, SMOOTHING_RADIUS);
+
+            for n in neighbours {
+                if n == pi {
+                    continue;
+                }
+
+                let npos = self.simulation.position[n];
+                let r = npos - pos;
+
+                let influence =
+                    w_spiky(r.magnitude(), SMOOTHING_RADIUS) * PI * SMOOTHING_RADIUS.powi(4) / 6.0;
+                draw_circle_2d(
+                    &self.renderer,
+                    npos,
+                    PARTICLE_RADIUS,
+                    vec4(1.0, influence, 0.0, 1.0),
+                );
+            }
+
+            // Draw arrow for pressure
+            let pressure_f = self.simulation.pressure_force[pi];
+            let pf_dir = pressure_f.angle(Vector2::unit_x());
+            draw_arrow_2d(
+                &self.renderer,
+                pos,
+                pf_dir,
+                pressure_f.magnitude() / 500.0,
+                1.0,
+                0.5,
+                0.5,
+                vec4(0.0, 1.0, 1.0, 1.0),
+            );
+            // Draw arrow for viscosity
+            let viscous_f = self.simulation.viscous_force[pi];
+            let vf_dir = viscous_f.angle(Vector2::unit_x());
+            draw_arrow_2d(
+                &self.renderer,
+                pos,
+                vf_dir,
+                viscous_f.magnitude() / 500.0,
+                1.0,
+                0.5,
+                0.5,
+                vec4(0.0, 0.2, 1.0, 1.0),
+            );
+        }
+    }
+
+    fn draw_particles(&self) {
+        let speed_gradient = &[
+            ColorStop::new_rgb(2.0, 120.0, 235.0, 0.0),
+            ColorStop::new_rgb(53.0, 229.0, 89.0, 0.25),
+            ColorStop::new_rgb(213.0, 135.0, 45.0, 0.80),
+            ColorStop::new_rgb(255.0, 75.0, 67.0, 1.0),
+        ];
 
         (0..self.simulation.particles).for_each(|i| {
             let pos = self.simulation.position[i];
-            let velocity= self.simulation.half_step_velocity[i].magnitude();
+            let v = self.simulation.half_step_velocity[i];
+            let scaled_v = (v.magnitude() / 200.0).clamp(0.0, 1.0);
 
-            let r = velocity / 20.0;
+            let color = self.linear_color_gradient(speed_gradient, scaled_v, 1.0);
 
-            draw_circle_2d(&self.renderer, pos, 1.0, vec4(1.0, 1.0 - r, 1.0 - r, 1.0));
-        });
+            draw_circle_2d(&self.renderer, pos, PARTICLE_RADIUS, color)
+        })
+    }
 
-        self.renderer
-            .present_scene(&self.queue, &self.device, &self.surface, &self.msaa);
+    fn draw_boundary_particles(&self) {
+        let color = vec4(0.8, 0.8, 0.8, 0.5);
+
+        (0..self.simulation.boundary_particles).for_each(|i| {
+            let p = self.simulation.boundary_particle_position[i];
+
+            draw_circle_2d(&self.renderer, p, PARTICLE_RADIUS, color)
+        })
+    }
+
+    fn draw_boundary_square(&self) {
+        let color = vec4(0.8, 0.8, 0.8, 1.0);
+
+        let padding = 1.0;
+
+        let x = HALF_WIDTH + PARTICLE_RADIUS + padding;
+        let y = HALF_HEIGHT + PARTICLE_RADIUS + padding;
+
+        let v1 = vec2(-x, y);
+        let v2 = vec2(-x, -y);
+        let v3 = vec2(x, -y);
+        let v4 = vec2(x, y);
+
+        draw_line_2d(&self.renderer, v1, v2, color);
+        draw_line_2d(&self.renderer, v2, v3, color);
+        draw_line_2d(&self.renderer, v3, v4, color);
+        draw_line_2d(&self.renderer, v4, v1, color);
+    }
+
+    fn linear_color_gradient(&self, colors: &[ColorStop], t: f32, a: f32) -> Vector4<f32> {
+        match colors.len() {
+            0 => vec4(0.0, 0.0, 0.0, a),
+            1 => colors[0].0.xyz().extend(a),
+            l => {
+                for i in 0..(l - 1) {
+                    if t >= colors[i].t() && t <= colors[i + 1].t() {
+                        let t = inverse_lerp(colors[i].t(), colors[i + 1].t(), t);
+                        let c1 = colors[i].color();
+                        let c2 = colors[i + 1].color();
+                        let c = lerp(c1, c2, t);
+
+                        return c.extend(a);
+                    }
+                }
+
+                unreachable!();
+            }
+        }
     }
 
     fn create_msaa_texture(device: &Device, config: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
@@ -571,6 +759,27 @@ impl WindowState {
     }
 }
 
+struct ColorStop(Vector4<f32>);
+
+impl ColorStop {
+    fn new_rgb(r: f32, g: f32, b: f32, t: f32) -> Self {
+        if !(0.0..=1.0).contains(&t) {
+            exit(1);
+        }
+
+        Self(vec4(r / 256.0, g / 256.0, b / 256.0, t))
+    }
+
+    #[inline]
+    fn t(&self) -> f32 {
+        self.0.w
+    }
+
+    fn color(&self) -> Vector3<f32> {
+        self.0.xyz()
+    }
+}
+
 pub struct Binding<T: Eq> {
     trigger: T,
     modifiers: ModifiersState,
@@ -596,6 +805,16 @@ const KEYBINDS: &[Binding<KeyCode>] = &[
     Binding::new(KeyCode::KeyD, ModifiersState::CONTROL, Action::ToggleDecorations),
     Binding::new(KeyCode::KeyF, ModifiersState::CONTROL, Action::ToggleFullscreen),
     Binding::new(KeyCode::KeyQ, ModifiersState::CONTROL, Action::CloseWindow),
-    Binding::new(KeyCode::Escape, ModifiersState::empty(), Action::TogglePauseSimulation),
+    Binding::new(KeyCode::Space, ModifiersState::empty(), Action::TogglePauseSimulation),
     Binding::new(KeyCode::KeyN, ModifiersState::empty(), Action::StepSimulation),
+    Binding::new(KeyCode::Escape, ModifiersState::empty(), Action::DeselectParticle),
+    Binding::new(KeyCode::KeyD, ModifiersState::empty(), Action::ToggleDebugMode),
+    Binding::new(KeyCode::KeyR, ModifiersState::CONTROL, Action::RestartSimulation),
+    Binding::new(KeyCode::KeyS, ModifiersState::empty(), Action::SpawnParticle),
+    Binding::new(KeyCode::KeyS, ModifiersState::CONTROL, Action::SpawnManyParticles),
 ];
+
+pub enum ButtonState {
+    Down,
+    Up,
+}
