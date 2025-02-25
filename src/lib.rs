@@ -6,7 +6,6 @@ pub mod grid_simulation;
 pub mod render_context;
 pub mod shaders;
 pub mod sph_simulation;
-
 pub const PARTICLE_COLOR: [f32; 4] = [0.0, 0.5, 1.0, 1.0];
 pub const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.0,
@@ -44,23 +43,13 @@ fn inverse_lerp(a: f32, b: f32, c: f32) -> f32 {
     (c - a) / (b - a)
 }
 
-/// Linearly interpolates a value between a and b using the value t. For example, if t is 0.5, a
-/// value halfway between a and b will be given. If t is 0.25, a value 25% between a and b will be
-/// given. Will accept values outside (0.0, 1.0) range and give a balue smaller than a or larger
-/// than b.
-fn lerp_unchecked(a: f32, b: f32, t: f32) -> f32 {
-    a * (1.0 - t) + b * t
-}
+/// Takes a [Vec<u8>] and pads it to align with the given [alignment]
+fn pad_bytes(v: &mut Vec<u8>, alignment: usize) -> usize
+{
+    let size = v.len();
+    let byte_parity = size % alignment;
+    let new_size = size + alignment - byte_parity;
 
-/// Bilinear interpolation
-fn bilerp(a: f32, b: f32, c: f32, d: f32, t: f32) -> f32 {
-    match t {
-        t if t < 0.0 => a,
-        t if t > 1.0 => d,
-        t => {
-            let l1 = lerp(a, b, t);
-            let l2 = lerp(c, d, t);
-            lerp(l1, l2, t)
-        }
-    }
+    v.resize(new_size, 0);
+    new_size
 }

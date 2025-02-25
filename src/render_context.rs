@@ -1,11 +1,17 @@
 #![allow(unused)]
 use core::num;
 use std::{
-    borrow::Cow, cell::RefCell, collections::HashMap, error::Error, fmt::Debug, num::NonZero,
+    borrow::{BorrowMut, Cow},
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
+    error::Error,
+    fmt::Debug,
+    marker::PhantomData,
+    num::NonZero,
 };
 
 use bytemuck::bytes_of;
-use cgmath::{vec2, Vector2, Vector3, Vector4};
+use cgmath::{vec2, vec3, vec4, Vector2, Vector3, Vector4};
 use image::Primitive;
 use itertools::Itertools;
 use log::info;
@@ -21,7 +27,7 @@ use wgpu::{
 
 use crate::{
     camera::{Camera, Camera2D, CameraState},
-    MAX_CIRCLES, SAMPLE_COUNT,
+    pad_bytes, MAX_CIRCLES, SAMPLE_COUNT,
 };
 
 use crate::shaders::{make_pipelines, PipelineType};
@@ -34,9 +40,7 @@ where
     config: wgpu::SurfaceConfiguration,
     camera: CameraState<C>,
 
-    circles: RefCell<DrawPrimitive<CircleVertex>>,
-    thin_lines: RefCell<DrawPrimitive<LineVertex>>,
-    arrows: RefCell<DrawPrimitive<ArrowVertex>>,
+    circles: DrawPrimitive<CircleVertex, CirclePrimitive>,
 }
 
 impl<C> RenderContext<C>
@@ -58,9 +62,7 @@ where
 
         let pipelines = make_pipelines(device, config, &camera);
 
-        let circles = RefCell::new(DrawPrimitive::new(device, 4, 6, crate::MAX_CIRCLES));
-        let thin_lines = RefCell::new(DrawPrimitive::new(device, 2, 2, crate::MAX_LINES));
-        let arrows = RefCell::new(DrawPrimitive::new(device, 7, 9, crate::MAX_ARROWS));
+        let circles = DrawPrimitive::new(device, crate::MAX_CIRCLES);
 
         Self {
             camera,
@@ -68,8 +70,6 @@ where
             config: config.clone(),
 
             circles,
-            thin_lines,
-            arrows,
         }
     }
 
@@ -85,11 +85,6 @@ where
         surface: &Surface,
         msaa: &Texture,
     ) {
-        // Populate buffers if primitive has been drawn
-        self.circles.get_mut().populate_buffers(queue);
-        self.thin_lines.get_mut().populate_buffers(queue);
-        self.arrows.get_mut().populate_buffers(queue);
-
         self.write_camera_buffer(queue);
 
         queue.submit([]);
@@ -106,6 +101,13 @@ where
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         let msaa_view = msaa.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Use .chain() to chain the shapes iterators
+        for data in self.circles.shapes.borrow_mut() {
+            self.circles.populate_buffers(queue, data);
+
+            {}
+        }
 
         // Render pass
         {
@@ -126,17 +128,6 @@ where
 
             // Set the camera bind group
             render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
-
-            self.circles
-                .borrow_mut()
-                .render_primitive(&mut render_pass, self.pipeline(PipelineType::CircleFill));
-            self.thin_lines.borrow_mut().render_primitive(
-                &mut render_pass,
-                self.pipeline(PipelineType::ZeroWidthLines),
-            );
-            self.arrows
-                .borrow_mut()
-                .render_primitive(&mut render_pass, self.pipeline(PipelineType::PolygonFill));
         }
 
         queue.submit(std::iter::once(encoder.finish()));
@@ -173,141 +164,240 @@ where
 }
 
 //
+// SHAPES QUEUE
+//
+
+/// Iterator that returns all data up to the set limit.
+pub struct ShapeQueue<V, S>
+where
+    V: Vertex + Sized + bytemuck::Pod,
+    S: PrimitiveShape<Vert = V> + Sized,
+{
+    shapes: VecDeque<S>,
+    limit: usize,
+}
+
+impl<V, S> ShapeQueue<V, S>
+where
+    V: Vertex + Sized + bytemuck::Pod,
+    S: PrimitiveShape<Vert = V> + Sized,
+{
+    const V_SIZE: usize = size_of::<V>();
+
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            ..Default::default()
+        }
+    }
+
+    /// Pushes a shape to the queue.
+    fn add_shape(&mut self, shape: S) {
+        self.shapes.push_back(shape);
+    }
+
+    /// Returns the data of the shapes inside the queue. The data will at most encapsule the number
+    /// of shapes given in [limit].
+    fn get_to_limit(&mut self) -> Option<(Vec<V>, Vec<u16>)> {
+        if self.shapes.is_empty() {
+            return None;
+        }
+
+        let n_shapes = self.shapes.len().min(self.limit);
+
+        let mut vertices: Vec<V> = Vec::with_capacity(n_shapes * S::N_VERTICES);
+        let mut indices: Vec<u16> = Vec::with_capacity(n_shapes * S::N_INDICES);
+
+        let data = (0..n_shapes).for_each(|_| {
+            // Pop the shape from the queue
+            let s = self.shapes.pop_front().unwrap();
+
+            // Get the vertex and index data of the shape
+            let (mut v, mut i) = s.to_data();
+
+            // Offset the index by the number of vertices already in the buffer
+            let n_v = vertices.len() as u16;
+            i.iter_mut().for_each(|i| *i += n_v);
+
+            // Append the vertices and indices to the buffer
+            vertices.append(&mut v);
+            indices.append(&mut i);
+        });
+
+        Some((vertices, indices))
+    }
+}
+
+impl<V, S> Default for ShapeQueue<V, S>
+where
+    V: Vertex + Sized + bytemuck::Pod,
+    S: PrimitiveShape<Vert = V> + Sized,
+{
+    fn default() -> Self {
+        Self {
+            shapes: Default::default(),
+            limit: 0,
+        }
+    }
+}
+
+impl<V, S> Iterator for ShapeQueue<V, S>
+where
+    V: Vertex + Sized + bytemuck::Pod,
+    S: PrimitiveShape<Vert = V> + Sized,
+{
+    type Item = (Vec<V>, Vec<u16>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.get_to_limit()
+    }
+}
+
+//
+// PRIMITIVE SHAPES
+//
+
+pub trait PrimitiveShape: Sized {
+    type Vert: Vertex + Sized + bytemuck::Pod;
+
+    const PIPELINE: PipelineType;
+    const N_VERTICES: usize;
+    const N_INDICES: usize;
+
+    fn to_data(&self) -> (Vec<Self::Vert>, Vec<u16>);
+}
+
+pub struct CirclePrimitive {
+    radius: f32,
+    position: Vector2<f32>,
+    color: Vector4<f32>,
+}
+
+impl PrimitiveShape for CirclePrimitive {
+    type Vert = CircleVertex;
+
+    const PIPELINE: PipelineType = PipelineType::CircleFill;
+    const N_VERTICES: usize = 4;
+    const N_INDICES: usize = 6;
+
+    fn to_data(&self) -> (Vec<Self::Vert>, Vec<u16>) {
+        let p = self.position;
+        let r = self.radius;
+        let color = self.color;
+
+        let center = vec4(p.x, p.y, 0.0, 1.0);
+        let rad = vec3(r, -r, 0.0);
+
+        let bl = center - rad.xxzz();
+        let br = center - rad.yxzz();
+        let tr = center + rad.xxzz();
+        let tl = center + rad.yxzz();
+
+        #[rustfmt::skip]
+        let vertices = vec![
+            CircleVertex { p: bl.into(), c: color.into(), fc: [-1., -1.]},
+            CircleVertex { p: br.into(), c: color.into(), fc: [-1.,  1.]},
+            CircleVertex { p: tr.into(), c: color.into(), fc: [ 1.,  1.]},
+            CircleVertex { p: tl.into(), c: color.into(), fc: [ 1., -1.]},
+        ];
+        let indices = vec![0, 1, 2, 2, 3, 0];
+
+        (vertices, indices)
+    }
+}
+
+//
 // PRIMITIVES
 //
 
-pub struct DrawPrimitive<V: Vertex + Sized + bytemuck::Pod> {
-    vertices: Vec<V>,
-    indices: Vec<u16>,
-    ib: Buffer,
-    vb: Buffer,
+pub struct DrawPrimitive<V, S>
+where
+    V: Vertex + Sized + bytemuck::Pod,
+    S: PrimitiveShape<Vert = V> + Sized,
+{
+    shapes: RefCell<ShapeQueue<V, S>>,
 
-    num_indices: u32,
-    in_use: bool,
+    ib: RefCell<Buffer>,
+    vb: RefCell<Buffer>,
 }
 
-impl<T> DrawPrimitive<T>
+impl<V, S> DrawPrimitive<V, S>
 where
-    T: Vertex + Sized + bytemuck::Pod + Debug,
+    V: Vertex + Sized + bytemuck::Pod + Debug,
+    S: PrimitiveShape<Vert = V> + Sized,
 {
-    fn new(device: &Device, num_verts: usize, num_ind: usize, max_prim: usize) -> Self {
-        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+    fn new(device: &Device, max_prim: usize) -> Self {
+        let vb = RefCell::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
-            size: (size_of::<T>() * max_prim * num_verts) as u64,
+            size: (size_of::<V>() * max_prim * S::N_VERTICES) as u64,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
+        }));
 
-        let ib = device.create_buffer(&wgpu::BufferDescriptor {
+        let ib = RefCell::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Index Buffer"),
-            size: (size_of::<u16>() * max_prim * num_ind) as u64,
+            size: (size_of::<u16>() * max_prim * S::N_INDICES) as u64,
             usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
+        }));
 
         Self {
-            vertices: Default::default(),
-            indices: Default::default(),
+            shapes: RefCell::new(ShapeQueue::new(max_prim)),
 
             vb,
             ib,
-
-            num_indices: 0,
-            in_use: false,
         }
     }
 
-    /// Appends the vertices and indices of a primitive to the vertex and index vectors
-    pub fn add_primitive(&mut self, vertices: &[T], indices: &[u16]) {
-        self.add_indices(indices);
-        self.add_vertices(vertices);
-    }
-    fn add_vertices(&mut self, vertices: &[T]) {
-        self.vertices.extend(vertices.iter());
-    }
-    fn add_indices(&mut self, indices: &[u16]) {
-        let num_vertices = self.vertices.len() as u16;
-        self.indices
-            .extend(indices.iter().map(|i| i + num_vertices));
+    #[inline]
+    pub fn add_shape(&mut self, shape: S) {
+        self.shapes.borrow_mut().add_shape(shape);
     }
 
     /// Populates the buffers with data. If there is no data, this function just returns
-    pub fn populate_buffers(&mut self, queue: &Queue) {
-        if !self.has_data() {
-            return;
-        }
+    pub fn populate_buffers(self, queue: &Queue, data: (Vec<V>, Vec<u16>)) {
+        let (v, i) = data;
 
-        let num_vertices = self.vertices.len();
-        let num_indices = self.indices.len();
+        let mut vb_bytes = bytemuck::cast_slice::<V, u8>(&v).to_vec();
+        let mut ib_bytes = bytemuck::cast_slice::<u16, u8>(&i).to_vec();
 
-        let vb_bytes_size = (num_vertices * size_of::<T>()) as u64;
-        let vb_bytes_parity = vb_bytes_size % COPY_BUFFER_ALIGNMENT;
+        let new_vb_size = pad_bytes(&mut vb_bytes, COPY_BUFFER_ALIGNMENT as usize) as u64;
+        let new_ib_size = pad_bytes(&mut ib_bytes, COPY_BUFFER_ALIGNMENT as usize) as u64;
 
-        let ib_bytes_size = (num_indices * size_of::<u16>()) as u64;
-        let ib_bytes_parity = ib_bytes_size % COPY_BUFFER_ALIGNMENT;
+        let vb = self.vb.borrow_mut();
+        let ib = self.ib.borrow_mut();
 
-        let mut vb_bytes = bytemuck::cast_slice::<T, u8>(&self.vertices).to_vec();
-        let mut ib_bytes = bytemuck::cast_slice::<u16, u8>(&self.indices).to_vec();
-
-        (0..vb_bytes_parity).for_each(|_| vb_bytes.push(0));
-        (0..ib_bytes_parity).for_each(|_| ib_bytes.push(0));
-
-        let mut vb_view = queue.write_buffer_with(&self.vb, 0, unsafe {
-            BufferSize::new_unchecked(vb_bytes_size + vb_bytes_parity)
-        });
-        let mut ib_view = queue.write_buffer_with(&self.ib, 0, unsafe {
-            BufferSize::new_unchecked(ib_bytes_size + ib_bytes_parity)
-        });
+        let mut vb_view =
+            queue.write_buffer_with(&vb, 0, unsafe { BufferSize::new_unchecked(new_vb_size) });
+        let mut ib_view =
+            queue.write_buffer_with(&ib, 0, unsafe { BufferSize::new_unchecked(new_ib_size) });
 
         vb_view.unwrap().as_mut().copy_from_slice(&vb_bytes);
         ib_view.unwrap().as_mut().copy_from_slice(&ib_bytes);
-
-        self.num_indices = self.indices.len() as u32;
-
-        self.vertices.clear();
-        self.indices.clear();
-
-        self.in_use = true;
     }
 
     /// Renders the primitive on the given render pass
-    pub fn render_primitive(&mut self, render_pass: &mut RenderPass, pipeline: &RenderPipeline) {
-        if !self.in_use {
-            return;
-        }
-
-        info!("Drawing primitive");
-        render_pass.set_pipeline(pipeline);
-
-        render_pass.set_vertex_buffer(0, self.vb().slice(..));
-        render_pass.set_index_buffer(self.ib().slice(..), wgpu::IndexFormat::Uint16);
-
-        render_pass.draw_indexed(0..self.num_indices(), 0, 0..1);
-
-        self.in_use = false;
-    }
+    //pub fn render_primitive(&mut self, render_pass: &mut RenderPass, pipeline: &RenderPipeline) {
+    //    if !self.in_use {
+    //        return;
+    //    }
+    //
+    //    info!("Drawing primitive");
+    //    render_pass.set_pipeline(pipeline);
+    //
+    //    render_pass.set_vertex_buffer(0, self.vb().slice(..));
+    //    render_pass.set_index_buffer(self.ib().slice(..), wgpu::IndexFormat::Uint16);
+    //
+    //    render_pass.draw_indexed(0..self.num_indices(), 0, 0..1);
+    //
+    //    self.in_use = false;
+    //}
 
     pub fn ib(&self) -> &Buffer {
         &self.ib
     }
     pub fn vb(&self) -> &Buffer {
         &self.vb
-    }
-
-    /// Returns whether the given primitive has been drawn
-    #[inline]
-    pub fn is_in_use(&self) -> bool {
-        self.in_use
-    }
-
-    /// Returns whether the given primitive has been drawn
-    #[inline]
-    pub fn has_data(&self) -> bool {
-        !self.vertices.is_empty()
-    }
-
-    pub fn num_indices(&self) -> u32 {
-        self.num_indices
     }
 }
 
